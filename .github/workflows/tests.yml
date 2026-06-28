@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Compile
+        run: |
+          python -m py_compile \
+            agent/agent.py \
+            server.py \
+            tools_data.py \
+            tools_search.py \
+            tools_browser.py \
+            test_agent.py
+
+      - name: Test
+        run: |
+          python -m pytest \
+            tests/test_agent_e2e.py \
+            tests/test_tools_data.py \
+            tests/test_tools_search.py \
+            tests/test_tools_browser.py \
+            tests/test_server_dispatch.py \
+            tests/test_mcp_smoke.py \
+            -q

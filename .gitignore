@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+
+debug_bing.html
+debug_ddg.html
+.env
+.env.*
+
+# Nested standalone project (separate git repo)
+self-evolving-agent/
