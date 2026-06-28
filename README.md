@@ -170,6 +170,35 @@ scraping Bing + DuckDuckGo. Results are normalized to one shape regardless of ba
 then falls back to scraping. Force one with the `provider` argument
 (`tavily` | `brave` | `google` | `scrape`).
 
+## Fetching & Anti-Bot Ladder
+
+`web_read` fetches pages through an escalation ladder ([scraper.py](scraper.py)): the
+cheapest method runs first and it escalates only when a result looks blocked or empty.
+A block/quality detector decides when to escalate; a per-domain rate limiter, circuit
+breaker, and negative cache keep things polite. The fetched tier and the full attempt
+trace are returned in `fetch_tier` / `scrape_tiers`.
+
+| Tier | Method | Enabled by |
+|------|--------|-----------|
+| 1 | HTTP (curl_cffi TLS impersonation) | always (default) |
+| 2 | HTTP through a rotating proxy | `WEBOPERATOR_PROXIES` set |
+| 3 | Headless Chromium (runs JavaScript) | `WEBOPERATOR_BROWSER_FALLBACK=1` (default on) |
+| 4 | Chromium through a proxy | proxies + browser |
+| 5 | Hosted scrape API (Firecrawl / ScrapingBee) | `WEBOPERATOR_SCRAPE_API` set |
+
+With nothing configured it behaves like the plain HTTP path plus an automatic browser
+fallback for JavaScript-rendered pages.
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `WEBOPERATOR_BROWSER_FALLBACK` | `1` | Escalate blocked/JS pages to headless Chromium. |
+| `WEBOPERATOR_PROXIES` | _(none)_ | Comma-separated proxy URLs; sticky per domain with health tracking. |
+| `WEBOPERATOR_SCRAPE_API` | _(none)_ | `firecrawl` or `scrapingbee` (needs `FIRECRAWL_API_KEY` / `SCRAPINGBEE_API_KEY`). |
+| `WEBOPERATOR_DOMAIN_RPS` / `_BURST` | `3` / `5` | Per-domain rate limit (token bucket). |
+| `WEBOPERATOR_BREAKER_THRESHOLD` / `_COOLDOWN` | `5` / `120` | Per-domain circuit breaker. |
+| `WEBOPERATOR_NEGCACHE_TTL` | `300` | Seconds to remember a blocked URL. |
+| `WEBOPERATOR_THIN_CONTENT_CHARS` | `200` | Below this extracted length a script-heavy page counts as a JS shell. |
+
 ## Runtime Data
 
 Persistent cache:
@@ -213,6 +242,7 @@ python -m pytest \
   tests/test_tools_data.py \
   tests/test_tools_extra.py \
   tests/test_tools_search.py \
+  tests/test_scraper.py \
   tests/test_tools_browser.py \
   tests/test_server_dispatch.py \
   tests/test_mcp_smoke.py \

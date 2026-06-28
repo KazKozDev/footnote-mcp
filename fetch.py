@@ -30,11 +30,13 @@ def _headers(lang="en"):
     }
 
 
-def _get(url, lang="en", cookies=None, max_retries=2, timeout=15, extra_headers=None):
+def _get(url, lang="en", cookies=None, max_retries=2, timeout=15, extra_headers=None, proxies=None):
     """Single HTTP GET with TLS impersonation and retries.
 
     ``extra_headers`` (optional) are merged on top of the default browser headers,
     which lets callers attach auth tokens or custom headers for gated pages.
+    ``proxies`` (optional) routes the request through a proxy, e.g.
+    ``{"http": "http://host:port", "https": "http://host:port"}``.
     """
     headers = _headers(lang)
     if extra_headers:
@@ -49,6 +51,7 @@ def _get(url, lang="en", cookies=None, max_retries=2, timeout=15, extra_headers=
                 impersonate=_imp(),
                 timeout=timeout,
                 allow_redirects=True,
+                proxies=proxies,
             )
         except Exception as exc:
             last_err = exc

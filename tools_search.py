@@ -6,6 +6,7 @@ from search import search
 from pipeline import search_extract_rerank, build_llm_context
 from fetch import fetch_page
 from extract import extract_content
+from scraper import fetch as scrape_fetch
 from tools_data import _read_cache, _write_cache, classify_source
 
 
@@ -60,18 +61,25 @@ def web_read(url: str, lang: str = "en", use_cache: bool = True) -> dict:
         result["cached"] = True
         return result
 
-    raw = fetch_page(url, lang=lang)
-    _, html, pub_date, error = raw
-    if error:
-        result = {"url": url, "error": error, "source_type": classify_source(url, text_sample=error)}
+    # Escalation ladder: http → proxy → browser → external (see scraper.py).
+    # fetch_page stays the injected tier-1 fetcher so callers/tests can stub it.
+    res = scrape_fetch(url, lang=lang, http_fn=fetch_page)
+    html = res.get("html")
+    pub_date = res.get("pub_date")
+    if not html:
+        error = res.get("error") or "Empty response body"
+        result = {
+            "url": url,
+            "error": error,
+            "source_type": classify_source(url, text_sample=error),
+            "fetch_tier": res.get("tier"),
+            "scrape_tiers": res.get("tiers_tried"),
+        }
         _write_cache(url, {"web_read": result, "fetch_error": error, "source_quality": result["source_type"]})
         return result
-    if not html:
-        result = {"url": url, "error": "Empty response body", "source_type": classify_source(url)}
-        _write_cache(url, {"web_read": result, "fetch_error": result["error"], "source_quality": result["source_type"]})
-        return result
 
-    text = extract_content(html, url=url)
+    fetched_url = res.get("final_url") or url
+    text = extract_content(html, url=fetched_url)
     title = ""
     soup = BeautifulSoup(html, "html.parser")
     title_tag = soup.find("title")
@@ -85,6 +93,8 @@ def web_read(url: str, lang: str = "en", use_cache: bool = True) -> dict:
         "pub_date": str(pub_date) if pub_date else None,
         "text_length": len(text) if text else 0,
         "source_type": source_type,
+        "fetch_tier": res.get("tier"),
+        "scrape_tiers": res.get("tiers_tried"),
         "cached": False,
     }
     _write_cache(url, {"web_read": result, "source_quality": source_type, "last_seen": result["pub_date"]})
