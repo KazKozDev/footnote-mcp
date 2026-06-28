@@ -80,6 +80,7 @@ async def list_tools() -> list[Tool]:
                     "lang": {"type": "string", "description": "Language code: en, ru, etc.", "default": "en"},
                     "num": {"type": "integer", "description": "Max results to return", "default": 10},
                     "provider": {"type": "string", "description": "auto | tavily | brave | google | scrape", "default": "auto"},
+                    "semantic": {"type": "boolean", "description": "Rerank results by meaning using local bge-m3 embeddings", "default": False},
                 },
                 "required": ["query"],
             },
@@ -622,6 +623,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 lang=arguments.get("lang", "en"),
                 num=arguments.get("num", 10),
                 provider=arguments.get("provider", "auto"),
+                semantic=arguments.get("semantic", False),
             )
         elif name == "web_deep_search":
             result = web_deep_search(
@@ -887,5 +889,10 @@ async def main():
         await server.run(read, write, init_opts)
 
 
-if __name__ == "__main__":
+def cli():
+    """Console-script entry point (sync wrapper around the async server)."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    cli()

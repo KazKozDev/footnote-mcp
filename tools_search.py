@@ -7,22 +7,42 @@ from pipeline import search_extract_rerank, build_llm_context
 from fetch import fetch_page
 from extract import extract_content
 from scraper import fetch as scrape_fetch
+from semantic import semantic_rerank
 from tools_data import _read_cache, _write_cache, classify_source
 
 
-def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto") -> dict:
+def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto", semantic: bool = False) -> dict:
     """Search via a keyed provider (Tavily/Brave/Google) when available, else Bing + DDG.
 
     ``provider``: auto | tavily | brave | google | scrape. Results are merged into a
     single shape regardless of backend.
+    ``semantic``: rerank results by meaning using local bge-m3 embeddings (best-effort;
+    over-fetches candidates, reorders by query similarity, then trims to ``num``).
     """
-    results = search(query, num=num, lang=lang, provider=provider)
+    candidates = max(num * 2, 15) if semantic else num
+    results = search(query, num=candidates, lang=lang, provider=provider)
+
+    reranked = False
+    if semantic and results:
+        ranked = semantic_rerank(query, results)
+        if any("semantic_score" in r for r in ranked):
+            results, reranked = ranked, True
+
+    results = results[:num]
     return {
         "query": query,
         "provider": provider,
+        "semantic": reranked,
         "count": len(results),
         "results": [
-            {"title": r["title"], "url": r["url"], "snippet": r["snippet"], "score": r["score"], "engines": r["engines"]}
+            {
+                "title": r["title"],
+                "url": r["url"],
+                "snippet": r["snippet"],
+                "score": r["score"],
+                "engines": r["engines"],
+                **({"semantic_score": r["semantic_score"]} if "semantic_score" in r else {}),
+            }
             for r in results
         ],
     }

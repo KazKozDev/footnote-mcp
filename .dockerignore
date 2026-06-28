@@ -1,0 +1,11 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+tests/
+benchmarks/REPORT.md
+tool_run_report.txt
+self-evolving-agent/
+.DS_Store

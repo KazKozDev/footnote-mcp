@@ -72,7 +72,31 @@ Browser fallback:
 
 ## Install
 
-Recommended:
+### One command (pipx / uvx)
+
+The server is a package with a `weboperator-mcp` entry point. Install it isolated:
+
+```bash
+pipx install /path/to/weboperator-mcp          # or:  pipx install git+<repo-url>
+python -m playwright install chromium           # one-time: fetch the headless browser
+```
+
+Or run it ad hoc without installing, straight from the source dir:
+
+```bash
+uvx --from /path/to/weboperator-mcp weboperator-mcp
+```
+
+### Docker (no Python/browser setup)
+
+```bash
+docker build -t weboperator-mcp .
+docker run -i --rm weboperator-mcp
+```
+
+The image bundles Chromium and tesseract, so there is nothing else to install.
+
+### From source
 
 ```bash
 python3 -m venv .venv
@@ -127,6 +151,51 @@ Interactive agent:
 
 ## MCP Client Config
 
+Drop one of these into your client's MCP settings (Claude Desktop:
+`claude_desktop_config.json`; Cursor: `~/.cursor/mcp.json`). Add API keys under `env`
+as needed (see Search Backends).
+
+**Installed via pipx (entry point on PATH):**
+
+```json
+{
+  "mcpServers": {
+    "weboperator": {
+      "command": "weboperator-mcp"
+    }
+  }
+}
+```
+
+**Run via uvx (no install, from the source dir):**
+
+```json
+{
+  "mcpServers": {
+    "weboperator": {
+      "command": "uvx",
+      "args": ["--from", "/path/to/weboperator-mcp", "weboperator-mcp"],
+      "env": { "TAVILY_API_KEY": "tvly-..." }
+    }
+  }
+}
+```
+
+**Docker:**
+
+```json
+{
+  "mcpServers": {
+    "weboperator": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "weboperator-mcp"]
+    }
+  }
+}
+```
+
+**From source (no packaging):**
+
 ```json
 {
   "mcpServers": {
@@ -139,19 +208,7 @@ Interactive agent:
 }
 ```
 
-Visible browser:
-
-```json
-{
-  "mcpServers": {
-    "weboperator": {
-      "command": "python",
-      "args": ["server.py", "--headed"],
-      "cwd": "/path/to/weboperator-mcp"
-    }
-  }
-}
-```
+Add `"--headed"` to the `args` to show the browser window.
 
 ## Search Backends
 
@@ -169,6 +226,37 @@ scraping Bing + DuckDuckGo. Results are normalized to one shape regardless of ba
 `auto` (default) tries every provider that has a key, in order Tavily → Brave → Google,
 then falls back to scraping. Force one with the `provider` argument
 (`tavily` | `brave` | `google` | `scrape`).
+
+**Semantic reranking.** Pass `semantic: true` to `web_search` to reorder results by
+*meaning* rather than keyword overlap: it over-fetches candidates, embeds the query and
+each result with a local ollama embedding model, and sorts by cosine similarity (each
+result gains a `semantic_score`). Best-effort — if ollama is unavailable the original
+order is returned. The model is `WEBOPERATOR_EMBED_MODEL` (default `bge-m3`).
+
+## Verification Benchmark
+
+The server's differentiator is source-grounded verification — telling claims that a
+source actually supports from ones it does not. [benchmarks/run_benchmark.py](benchmarks/run_benchmark.py)
+measures this on a labeled set of claim/source pairs and also demos `corroborate_claim`
+and `locate_claim_span`.
+
+| Backend | Set | Accuracy | Unsupported-claim catch rate | Precision on "supported" |
+|---------|-----|----------|------------------------------|--------------------------|
+| heuristic (offline) | data domain (numeric/factual) | **100%** | **100%** | **100%** |
+| heuristic (offline) | overall (incl. semantic) | 83% | 78% | 80% |
+| ollama LLM judge | overall (incl. semantic) | 78% | **100%** | **100%** |
+
+On its design domain — numeric and factual data claims — the offline heuristic is flawless:
+it never blesses an unsupported claim and always catches one. Its only blind spot is
+purely-semantic negation/paraphrase. The optional LLM backend (`evidence_entailment`
+`backend="ollama"`) closes that: across all cases it never lets an unsupported claim
+through (100% catch rate, 100% precision on "supported"), erring conservatively by
+flagging borderline claims for review rather than wrongly clearing them.
+
+```bash
+python benchmarks/run_benchmark.py                    # offline heuristic
+python benchmarks/run_benchmark.py --backend ollama   # LLM judge (needs ollama)
+```
 
 ## Fetching & Anti-Bot Ladder
 
@@ -242,6 +330,8 @@ python -m pytest \
   tests/test_tools_data.py \
   tests/test_tools_extra.py \
   tests/test_tools_search.py \
+  tests/test_semantic.py \
+  tests/test_benchmark.py \
   tests/test_scraper.py \
   tests/test_tools_browser.py \
   tests/test_server_dispatch.py \
