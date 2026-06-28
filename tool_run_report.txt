@@ -1,0 +1,1261 @@
+WebOperator MCP — full tool run report
+generated: 2026-06-28T16:20:11
+LLM model for LLM-backed tools: qwen3.5:4b-mlx
+transport: in-process Server CallToolRequest handler (real dispatch)
+
+==============================================================================
+#01  startup_health_check    [OK]
+------------------------------------------------------------------------------
+args: {}
+result:
+{
+  "ok": true,
+  "checks": {
+    "bs4": {
+      "ok": true
+    },
+    "trafilatura": {
+      "ok": true
+    },
+    "playwright": {
+      "ok": true
+    },
+    "openpyxl": {
+      "ok": true
+    },
+    "pypdf": {
+      "ok": true
+    },
+    "xlrd": {
+      "ok": true
+    },
+    "pdfplumber": {
+      "ok": true
+    },
+    "pytesseract": {
+      "ok": true
+    },
+    "tesseract_binary": {
+      "ok": true,
+      "path": "/opt/homebrew/bin/tesseract"
+    },
+    "cache_dir": {
+      "ok": true,
+      "path": "/Users/artemk/.weboperator-mcp/source_cache"
+    }
+  }
+}
+
+==============================================================================
+#02  generate_search_queries    [OK]
+------------------------------------------------------------------------------
+args: {"task": "daily EUR/USD exchange rate May 2026"}
+result:
+{
+  "task": "daily EUR/USD exchange rate May 2026",
+  "queries": [
+    "daily EUR/USD exchange rate May 2026 official data",
+    "daily EUR/USD exchange rate May 2026 historical data table",
+    "daily EUR/USD exchange rate May 2026 csv",
+    "daily EUR/USD exchange rate May 2026 xlsx",
+    "daily EUR/USD exchange rate May 2026 API",
+    "daily EUR/USD exchange rate May 2026 filetype:csv",
+    "daily EUR/USD exchange rate May 2026 filetype:xlsx",
+    "daily EUR/USD exchange rate May 2026 filetype:json"
+  ],
+  "count": 8
+}
+
+==============================================================================
+#03  check_date_completeness    [OK]
+------------------------------------------------------------------------------
+args: {"start_date": "2026-05-01", "end_date": "2026-05-05", "actual_items": ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05"], "granularity": "day"}
+result:
+{
+  "start_date": "2026-05-01",
+  "end_date": "2026-05-05",
+  "granularity": "day",
+  "calendar": "calendar",
+  "holidays": [],
+  "expected_count": 5,
+  "actual_count": 5,
+  "missing_items": [],
+  "extra_items": [],
+  "complete": true
+}
+
+==============================================================================
+#04  resolve_units    [OK]
+------------------------------------------------------------------------------
+args: {"text": "The price was 100 USD per barrel and the EUR/USD rate was 1.08"}
+result:
+{
+  "currency_pairs": [
+    "EUR/USD"
+  ],
+  "primary_pair": "EUR/USD",
+  "base_currency": "EUR",
+  "quote_currency": "USD",
+  "currencies": [
+    "EUR",
+    "USD"
+  ],
+  "units": [
+    "EUR",
+    "RATE",
+    "USD"
+  ],
+  "text_sample": "The price was 100 USD per barrel and the EUR/USD rate was 1.08"
+}
+
+==============================================================================
+#05  validate_unit_rows    [OK]
+------------------------------------------------------------------------------
+args: {"rows": [{"note": "EUR/USD 1.08"}, {"note": "100 USD/barrel"}], "expected_unit_or_pair": "EUR/USD", "text_fields": ["note"]}
+result:
+{
+  "expected": {
+    "currency_pairs": [
+      "EUR/USD"
+    ],
+    "primary_pair": "EUR/USD",
+    "base_currency": "EUR",
+    "quote_currency": "USD",
+    "currencies": [
+      "EUR",
+      "USD"
+    ],
+    "units": [
+      "EUR",
+      "USD"
+    ],
+    "text_sample": "EUR/USD"
+  },
+  "accepted_rows": [
+    {
+      "note": "EUR/USD 1.08"
+    }
+  ],
+  "rejected_rows": [
+    {
+      "row_index": 2,
+      "row": {
+        "note": "100 USD/barrel"
+      },
+      "detected": {
+        "currency_pairs": [],
+        "primary_pair": null,
+        "base_currency": null,
+        "quote_currency": null,
+        "currencies": [
+          "USD"
+        ],
+        "units": [
+          "USD"
+        ],
+        "text_sample": "100 USD/barrel"
+      },
+      "reason": "expected currencies ['EUR', 'USD'], found ['USD']"
+    }
+  ],
+  "accepted_count": 1,
+  "rejected_count": 1
+}
+
+==============================================================================
+#06  classify_source    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://www.federalreserve.gov/data.htm", "status_code": 200, "content_type": "text/html", "text_sample": "official statistics release"}
+result:
+{
+  "url": "https://www.federalreserve.gov/data.htm",
+  "host": "www.federalreserve.gov",
+  "source_type": "official",
+  "reasons": [
+    "official domain"
+  ]
+}
+
+==============================================================================
+#07  evidence_entailment    [OK]   (real LLM call)
+------------------------------------------------------------------------------
+args: {"claim": "The capital of France is Paris.", "source_excerpt": "Paris is the capital and most populous city of France.", "backend": "ollama", "model": "qwen3.5:4b-mlx"}
+result:
+{
+  "status": "supported",
+  "score": 1.0,
+  "reason": "The source explicitly states that Paris is the capital of France, which directly matches the claim.",
+  "backend": "ollama",
+  "model": "qwen3.5:4b-mlx",
+  "heuristic_precheck": {
+    "status": "supported",
+    "score": 1.0,
+    "reason": "token overlap heuristic",
+    "backend": "heuristic"
+  }
+}
+
+==============================================================================
+#08  tool_spec_propose    [OK]
+------------------------------------------------------------------------------
+args: {"task": "extract daily exchange rates", "source_url": "https://example.org", "observed_failure": "generic table parser returned no rows"}
+result:
+{
+  "name": "extract-daily-exchange-rates",
+  "task": "extract daily exchange rates",
+  "source_url": "https://example.org",
+  "observed_failure": "generic table parser returned no rows",
+  "why_existing_tools_insufficient": "generic table parser returned no rows",
+  "code_contract": {
+    "entrypoint": "extract(source_text, input_payload)",
+    "input_payload": {
+      "source_url": "optional provenance URL",
+      "expected_unit_or_pair": "optional expected unit or currency pair",
+      "notes": "optional task-specific notes"
+    },
+    "output_schema": {
+      "rows": [
+        {
+          "date": "YYYY-MM-DD",
+          "value": "number or string",
+          "unit": "string",
+          "source_url": "string"
+        }
+      ],
+      "row_count": "integer",
+      "notes": "optional string"
+    }
+  },
+  "safety_contract": {
+    "allowed_imports": [
+      "csv",
+      "datetime",
+      "html",
+      "json",
+      "math",
+      "re",
+      "statistics"
+    ],
+    "forbidden": [
+      "filesystem reads/writes",
+      "subprocesses",
+      "network access from recipe code",
+      "environment/secrets access",
+      "dynamic code execution"
+    ]
+  },
+  "desired_output": "rows with da
+... [truncated, 1359 chars total]
+
+==============================================================================
+#09  tool_code_generate    [OK]
+------------------------------------------------------------------------------
+args: {"spec": {"name": "extract-daily-exchange-rates", "task": "extract daily exchange rates", "source_url": "https://example.org", "observed_failure": "generic table parser returned no rows", "why_existing_tools_insufficient": "generic table parser returned no rows", "code_contract": {"entrypoint": "ext
+result:
+{
+  "spec": {
+    "name": "extract-daily-exchange-rates",
+    "task": "extract daily exchange rates",
+    "source_url": "https://example.org",
+    "observed_failure": "generic table parser returned no rows",
+    "why_existing_tools_insufficient": "generic table parser returned no rows",
+    "code_contract": {
+      "entrypoint": "extract(source_text, input_payload)",
+      "input_payload": {
+        "source_url": "optional provenance URL",
+        "expected_unit_or_pair": "optional expected unit or currency pair",
+        "notes": "optional task-specific notes"
+      },
+      "output_schema": {
+        "rows": [
+          {
+            "date": "YYYY-MM-DD",
+            "value": "number or string",
+            "unit": "string",
+            "source_url": "string"
+          }
+        ],
+        "row_count": "integer",
+        "notes": "optional string"
+      }
+    },
+    "safety_contract": {
+      "allowed_imports": [
+        "csv",
+        "datetime",
+        "html",
+        "json",
+        "math",
+        "re",
+        "statistics"
+      ],
+      "forbidden": [
+        "filesystem reads/writes",
+        "subprocesses",
+        "network access from recipe code",
+        "environment/
+... [truncated, 2637 chars total]
+
+==============================================================================
+#10  tool_code_validate    [OK]
+------------------------------------------------------------------------------
+args: {"code": "def extract(source_text, input_payload):\n    return {'rows': [{'date': '2026-05-01', 'value': '1.08', 'unit': 'EUR/USD'}], 'row_count': 1}\n"}
+result:
+{
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "allowed_imports": [
+    "csv",
+    "datetime",
+    "html",
+    "json",
+    "math",
+    "re",
+    "statistics"
+  ],
+  "entrypoint": "extract(source_text, input_payload)"
+}
+
+==============================================================================
+#11  tool_code_run_sandboxed    [OK]
+------------------------------------------------------------------------------
+args: {"code": "def extract(source_text, input_payload):\n    return {'rows': [{'date': '2026-05-01', 'value': '1.08', 'unit': 'EUR/USD'}], 'row_count': 1}\n", "source_text": "2026-05-01 1.08", "input_payload": {}}
+result:
+{
+  "ok": true,
+  "result": {
+    "rows": [
+      {
+        "date": "2026-05-01",
+        "value": "1.08",
+        "unit": "EUR/USD"
+      }
+    ],
+    "row_count": 1
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "allowed_imports": [
+      "csv",
+      "datetime",
+      "html",
+      "json",
+      "math",
+      "re",
+      "statistics"
+    ],
+    "entrypoint": "extract(source_text, input_payload)"
+  },
+  "returncode": 0
+}
+
+==============================================================================
+#12  tool_promote    [OK]
+------------------------------------------------------------------------------
+args: {"name": "report_demo_recipe", "code": "def extract(source_text, input_payload):\n    return {'rows': [{'date': '2026-05-01', 'value': '1.08', 'unit': 'EUR/USD'}], 'row_count': 1}\n", "sample_source_text": "2026-05-01 1.08", "expected_min_rows": 1}
+result:
+{
+  "promoted": true,
+  "recipe_id": "report-demo-recipe-81816e3a6e",
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "allowed_imports": [
+      "csv",
+      "datetime",
+      "html",
+      "json",
+      "math",
+      "re",
+      "statistics"
+    ],
+    "entrypoint": "extract(source_text, input_payload)"
+  },
+  "smoke_result": {
+    "ok": true,
+    "result": {
+      "rows": [
+        {
+          "date": "2026-05-01",
+          "value": "1.08",
+          "unit": "EUR/USD"
+        }
+      ],
+      "row_count": 1
+    },
+    "validation": {
+      "valid": true,
+      "errors": [],
+      "warnings": [],
+      "allowed_imports": [
+        "csv",
+        "datetime",
+        "html",
+        "json",
+        "math",
+        "re",
+        "statistics"
+      ],
+      "entrypoint": "extract(source_text, input_payload)"
+    },
+    "returncode": 0
+  }
+}
+
+==============================================================================
+#13  source_cache_put    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://report.example/test", "payload": {"hello": "world"}}
+result:
+{
+  "url": "https://report.example/test",
+  "ok": true,
+  "cache_path": "/Users/artemk/.weboperator-mcp/source_cache/8cc412cb353398f54fd813005bc47544cbed65125e9ec54157449cb6a044f628.json"
+}
+
+==============================================================================
+#14  source_cache_get    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://report.example/test"}
+result:
+{
+  "url": "https://report.example/test",
+  "found": true,
+  "cache": {
+    "hello": "world",
+    "cached_at": "2026-06-28T16:20:30",
+    "url": "https://report.example/test"
+  }
+}
+
+==============================================================================
+#15  build_research_debug_report    [OK]
+------------------------------------------------------------------------------
+args: {"task": "EUR/USD report", "requirements": {"granularity": "day"}}
+result:
+{
+  "task": "EUR/USD report",
+  "requirements": {
+    "granularity": "day"
+  },
+  "attempted_queries": [],
+  "read_urls": [],
+  "failed_urls": [],
+  "search_rounds": [],
+  "sources": [],
+  "verification": {
+    "task_complete": null,
+    "insufficient_evidence": null,
+    "gaps": [],
+    "coverage": {}
+  }
+}
+
+==============================================================================
+#16  web_search    [OK]
+------------------------------------------------------------------------------
+args: {"query": "wikipedia python programming language", "num": 3}
+result:
+{
+  "query": "wikipedia python programming language",
+  "count": 3,
+  "results": [
+    {
+      "title": "Wikipedia-Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Wikipedia",
+      "snippet": "Wikipedia[e] is a free online encyclopedia written and maintained by a community of volunteers, known as Wikipedians, through open collaboration and the wiki software MediaWiki. Founded by Jimmy …",
+      "score": 1.0,
+      "engines": [
+        "bing"
+      ]
+    },
+    {
+      "title": "Python (programming language) - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "snippet": "Pythonis a high-level, general-purposeprogramminglanguagethat emphasizes code readability, simplicity, and ease-of-writing with the use of significant indentation, [38] an extensive (\"batteries-included\") standard library, and garbage collection.Pythonsupports multipleprogrammingparadigms but with an emphasis on object-orientedprogrammingand dynamic typing. Guido van Rossum began ...",
+      "score": 1.0,
+      "engines": [
+        "ddg"
+      ]
+    },
+    {
+      "title": "Wikipedia, the free encyclopedia",
+      "url": "https://en.wikipedia.org/wiki/Main_Page",
+... [truncated, 1498 chars total]
+
+==============================================================================
+#17  web_read    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://www.iana.org/domains/reserved"}
+result:
+{
+  "url": "https://www.iana.org/domains/reserved",
+  "title": "IANA-managed Reserved Domains",
+  "text": "# IANA-managed Reserved Domains\n\nCertain domains are set aside, and nominally registered to “IANA”, for specific policy or technical purposes.\n\n## Example domains\n\nAs described in RFC 2606 and RFC 6761, a number of domains such as example.com and example.org are maintained for documentation purposes. These domains may be used as illustrative examples in documents without prior coordination with us. They are not available for registration or transfer.\n\n## Test IDN top-level domains\n\nThese domains were temporarily delegated by IANA for the IDN Evaluation being conducted by ICANN.\n\n| Domain | Domain (A-label) | Language | Script |\n|---|---|---|---|\n| إختبار | XN--KGBECHTV | Arabic | Arabic |\n| آزمایشی | XN--HGBK6AJ7F53BBA | Persian | Arabic |\n| 测试 | XN--0ZWM56D | Chinese | Han (Simplified variant) |\n| 測試 | XN--G6W251D | Chinese | Han (Traditional variant) |\n| испытание | XN--80AKHBYKNJ4F | Russian | Cyrillic |\n| परीक्षा | XN--11B5BS3A9AJ6G | Hindi | Devanagari (Nagari) |\n| δοκιμή | XN--JXALPDLP | Greek, Modern (1453-) | Greek |\n| 테스트 | XN--9T4B11YI5A | Korean
+... [truncated, 2362 chars total]
+
+==============================================================================
+#18  web_fetch_json    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://api.github.com"}
+result:
+{
+  "url": "https://api.github.com",
+  "content_type": "application/json; charset=utf-8",
+  "json": {
+    "current_user_url": "https://api.github.com/user",
+    "current_user_authorizations_html_url": "https://github.com/settings/connections/applications{/client_id}",
+    "authorizations_url": "https://api.github.com/authorizations",
+    "code_search_url": "https://api.github.com/search/code?q={query}{&page,per_page,sort,order}",
+    "commit_search_url": "https://api.github.com/search/commits?q={query}{&page,per_page,sort,order}",
+    "emails_url": "https://api.github.com/user/emails",
+    "emojis_url": "https://api.github.com/emojis",
+    "events_url": "https://api.github.com/events",
+    "feeds_url": "https://api.github.com/feeds",
+    "followers_url": "https://api.github.com/user/followers",
+    "following_url": "https://api.github.com/user/following{/target}",
+    "gists_url": "https://api.github.com/gists{/gist_id}",
+    "hub_url": "https://api.github.com/hub",
+    "issue_search_url": "https://api.github.com/search/issues?q={query}{&page,per_page,sort,order}",
+    "issues_url": "https://api.github.com/issues",
+    "keys_url": "https://api.github.com/user/keys",
+    "label_sear
+... [truncated, 2583 chars total]
+
+==============================================================================
+#19  web_detect_downloads    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://www.census.gov/programs-surveys.html"}
+result:
+{
+  "url": "https://www.census.gov/programs-surveys.html",
+  "downloads": [],
+  "count": 0
+}
+
+==============================================================================
+#20  web_extract_tables    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://en.wikipedia.org/wiki/List_of_largest_companies_by_revenue", "max_tables": 1, "max_rows": 5}
+result:
+{
+  "url": "https://en.wikipedia.org/wiki/List_of_largest_companies_by_revenue",
+  "cached": true,
+  "tables": [
+    {
+      "caption": "",
+      "columns": [
+        "Ranks",
+        "Name",
+        "Industry",
+        "Revenue",
+        "Profit",
+        "Employees",
+        "Headquarters [ note 1 ]",
+        "State-owned",
+        "Ref."
+      ],
+      "rows": [
+        {
+          "Ranks": "USD (in billions)",
+          "Name": "",
+          "Industry": "",
+          "Revenue": "",
+          "Profit": "",
+          "Employees": "",
+          "Headquarters [ note 1 ]": "",
+          "State-owned": "",
+          "Ref.": ""
+        },
+        {
+          "Ranks": "1",
+          "Name": "Amazon",
+          "Industry": "Retail Information technology",
+          "Revenue": "716",
+          "Profit": "79.9",
+          "Employees": "1,576,000",
+          "Headquarters [ note 1 ]": "United States",
+          "State-owned": "",
+          "Ref.": "[ 5 ]"
+        },
+        {
+          "Ranks": "2",
+          "Name": "Walmart",
+          "Industry": "Retail",
+          "Revenue": "713",
+          "Profit": "21.8",
+          "Employees": "2,100,000",
+          "Headquarters [ note 1 ]": "",
+... [truncated, 1990 chars total]
+
+==============================================================================
+#21  web_parse_file    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://people.sc.fsu.edu/~jburkardt/data/csv/airtravel.csv", "max_rows": 5}
+result:
+{
+  "url": "https://people.sc.fsu.edu/~jburkardt/data/csv/airtravel.csv",
+  "cached": true,
+  "file_type": "csv",
+  "content_type": "text/csv",
+  "tables": [
+    {
+      "table_index": 1,
+      "columns": [
+        "Month",
+        "1958",
+        "1959",
+        "1960"
+      ],
+      "rows": [
+        {
+          "Month": "JAN",
+          "1958": "340",
+          "1959": "360",
+          "1960": "417"
+        },
+        {
+          "Month": "FEB",
+          "1958": "318",
+          "1959": "342",
+          "1960": "391"
+        },
+        {
+          "Month": "MAR",
+          "1958": "362",
+          "1959": "406",
+          "1960": "419"
+        },
+        {
+          "Month": "APR",
+          "1958": "348",
+          "1959": "396",
+          "1960": "461"
+        },
+        {
+          "Month": "MAY",
+          "1958": "363",
+          "1959": "420",
+          "1960": "472"
+        }
+      ],
+      "row_count": 5
+    }
+  ]
+}
+
+==============================================================================
+#22  web_deep_search    [OK]
+------------------------------------------------------------------------------
+args: {"query": "current population of Japan 2026"}
+result:
+{
+  "query": "current population of Japan 2026",
+  "context": "[1] Japan population, June 2026 - Nations Geo\nPopulation of Japan Today\n\n122,434,442\n\n*Live*\n\nSunday, June 28, 2026\n\n*Sources V.27 Edition UN Population Division*\n\n## Current population of Japan\n\nIn Japan, the population is 122,434,442 as of Sunday, June 28, 2026, with a growth rate of -0.56% per year, 2,044 births per day, and 4,283 deaths per day. The population of Japan is equivalent to 1.49% of the world's total's population.\n\n[2] Japan Population (2026) - Worldometer\n35% of the population is urban (114,292,213 people in 2026)\n- The median age in Japan is 50.2 years.\n\n| Year | Population | Yearly % Change | Yearly Change | Migrants (net) | Median Age | Fertility Rate | Density (P/Km²) | Urban Pop % | Urban Population | Country's Share of World Pop | World Population | Japan Global Rank |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| 2026 | 122,427,731 | −0.55% | −675,748 | 128,619 | 50.2 | 1.23 | 336 | 93.4% | 114,292,213 | 1.47% | 8,300,678,395 | 12 |\n| 2025 | 123,103,479 | −0.52% | −649,562 | 140,579 | 49.8 | 1.23 | 338 | 93.1% | 114,645,589 | 1.50% | 8,231,613,070 | 12 |\n\n[3] Jap
+... [truncated, 7861 chars total]
+
+==============================================================================
+#23  web_search_recent    [OK]
+------------------------------------------------------------------------------
+args: {"query": "openai announcement", "freshness": "week", "num": 3}
+result:
+{
+  "query": "openai announcement",
+  "freshness": "week",
+  "df": "w",
+  "count": 3,
+  "results": [
+    {
+      "title": "OpenAI News",
+      "url": "https://openai.com/news/",
+      "snippet": "Stay up to speed on the rapid advancement of AI technology and the benefits it offers to humanity."
+    },
+    {
+      "title": "OpenAI unveils its first custom chip, built by Broadcom",
+      "url": "https://techcrunch.com/2026/06/24/openai-unveils-its-first-custom-chip-built-by-broadcom/",
+      "snippet": "On Wednesday,OpenAIunveiled its first custom-built inference processor, designed and manufactured in collaboration with Broadcom. Named Jalapeño, the new processor was designed specifically for ..."
+    },
+    {
+      "title": "OpenAI and Broadcom unveil LLM-optimized inference chip",
+      "url": "https://openai.com/index/openai-broadcom-jalapeno-inference-chip/",
+      "snippet": "OpenAIand Broadcom introduce Jalapeño, a custom AI chip built for LLM inference to improve performance, efficiency, and scale across AI systems."
+    }
+  ]
+}
+
+==============================================================================
+#24  scholarly_search    [OK]
+------------------------------------------------------------------------------
+args: {"query": "graph neural networks", "source": "arxiv", "num": 2}
+result:
+{
+  "query": "graph neural networks",
+  "source": "arxiv",
+  "count": 2,
+  "results": [
+    {
+      "title": "The Deep Arbitrary Polynomial Chaos Neural Network or how Deep Artificial Neural Networks could benefit from Data-Driven Homogeneous Chaos Theory",
+      "url": "http://arxiv.org/abs/2306.14753v1",
+      "summary": "Artificial Intelligence and Machine learning have been widely used in various fields of mathematical computing, physical modeling, computational science, communication science, and stochastic analysis. Approaches based on Deep Artificial Neural Networks (DANN) are very popular in our days. Depending on the learning task, the exact form of DANNs is determined via their multi-layer architecture, activation functions and the so-called loss function. However, for a majority of deep learning approaches based on DANNs, the kernel structure of neural signal processing remains the same, where the node",
+      "authors": [
+        "Sergey Oladyshkin",
+        "Timothy Praditia",
+        "Ilja Kröker",
+        "Farid Mohammadi",
+        "Wolfgang Nowak",
+        "Sebastian Otte"
+      ],
+      "published": "2023-06-26T15:09:14Z"
+    },
+    {
+      "title": "Learning Activ
+... [truncated, 2146 chars total]
+
+==============================================================================
+#25  web_archive_fetch    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://www.iana.org/domains/reserved", "fetch_text": false}
+result:
+{
+  "url": "https://www.iana.org/domains/reserved",
+  "archived": true,
+  "snapshot_url": "http://web.archive.org/web/20260626044944/https://www.iana.org/domains/reserved",
+  "snapshot_timestamp": "20260626044944",
+  "status": "200"
+}
+
+==============================================================================
+#26  corroborate_claim    [OK]   (real LLM call)
+------------------------------------------------------------------------------
+args: {"claim": "The capital of France is Paris.", "excerpts": [{"source_url": "https://a.gov/p", "text": "Paris is the capital of France."}, {"source_url": "https://b.org/p", "text": "France's capital city is Paris."}], "backend": "ollama"}
+result:
+{
+  "claim": "The capital of France is Paris.",
+  "verdict": "corroborated",
+  "agreement": 1.0,
+  "supporting": 2,
+  "contradicting": 0,
+  "independent_supporting_domains": 2,
+  "counts": {
+    "supported": 2,
+    "contradicted": 0,
+    "neutral": 0,
+    "unsupported": 0
+  },
+  "per_source": [
+    {
+      "source_url": "https://a.gov/p",
+      "status": "supported",
+      "score": 1.0,
+      "reason": "The source statement is logically equivalent to the claim, asserting the same relationship between Paris and France's capital."
+    },
+    {
+      "source_url": "https://b.org/p",
+      "status": "supported",
+      "score": 1.0,
+      "reason": "The source explicitly states 'France's capital city is Paris,' which is semantically identical to the claim 'The capital of France is Paris.'"
+    }
+  ]
+}
+
+==============================================================================
+#27  locate_claim_span    [OK]
+------------------------------------------------------------------------------
+args: {"claim": "capital of France is Paris", "source_text": "The sky is blue. The capital of France is Paris. Water boils at 100 C."}
+result:
+{
+  "claim": "capital of France is Paris",
+  "spans": [
+    {
+      "text": "The capital of France is Paris.",
+      "start": 16,
+      "end": 48,
+      "score": 1.0,
+      "matched_terms": [
+        "capital",
+        "france",
+        "paris"
+      ]
+    }
+  ],
+  "best_score": 1.0
+}
+
+==============================================================================
+#28  recipe_registry    [OK]
+------------------------------------------------------------------------------
+args: {"action": "list"}
+result:
+{
+  "action": "list",
+  "count": 4,
+  "recipes": [
+    {
+      "id": "hp-smoke-b384069c4a",
+      "name": "hp_smoke",
+      "created_at": "2026-06-28T14:37:57",
+      "plays": 0,
+      "wins": 0
+    },
+    {
+      "id": "fix-dict-fbd54bf9b1",
+      "name": "fix_dict",
+      "created_at": "2026-06-28T14:39:40",
+      "plays": 0,
+      "wins": 0
+    },
+    {
+      "id": "fix-list-c25b10dc8d",
+      "name": "fix_list",
+      "created_at": "2026-06-28T14:39:40",
+      "plays": 0,
+      "wins": 0
+    },
+    {
+      "id": "report-demo-recipe-81816e3a6e",
+      "name": "report_demo_recipe",
+      "created_at": "2026-06-28T16:20:30",
+      "plays": 0,
+      "wins": 0
+    }
+  ]
+}
+
+==============================================================================
+#29  web_fetch_authenticated    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://www.iana.org/domains/reserved", "headers": {"X-Test": "1"}}
+result:
+{
+  "url": "https://www.iana.org/domains/reserved",
+  "status_code": 200,
+  "title": "IANA-managed Reserved Domains",
+  "text": "# IANA-managed Reserved Domains\n\nCertain domains are set aside, and nominally registered to “IANA”, for specific policy or technical purposes.\n\n## Example domains\n\nAs described in RFC 2606 and RFC 6761, a number of domains such as example.com and example.org are maintained for documentation purposes. These domains may be used as illustrative examples in documents without prior coordination with us. They are not available for registration or transfer.\n\n## Test IDN top-level domains\n\nThese domains were temporarily delegated by IANA for the IDN Evaluation being conducted by ICANN.\n\n| Domain | Domain (A-label) | Language | Script |\n|---|---|---|---|\n| إختبار | XN--KGBECHTV | Arabic | Arabic |\n| آزمایشی | XN--HGBK6AJ7F53BBA | Persian | Arabic |\n| 测试 | XN--0ZWM56D | Chinese | Han (Simplified variant) |\n| 測試 | XN--G6W251D | Chinese | Han (Traditional variant) |\n| испытание | XN--80AKHBYKNJ4F | Russian | Cyrillic |\n| परीक्षा | XN--11B5BS3A9AJ6G | Hindi | Devanagari (Nagari) |\n| δοκιμή | XN--JXALPDLP | Greek, Modern (1453-) | Greek |\n| 테스트 | X
+... [truncated, 2262 chars total]
+
+==============================================================================
+#30  web_crawl    [OK]
+------------------------------------------------------------------------------
+args: {"start_url": "https://www.iana.org/domains/reserved", "max_pages": 2}
+result:
+{
+  "start_url": "https://www.iana.org/domains/reserved",
+  "same_domain": true,
+  "pages_crawled": 2,
+  "pages": [
+    {
+      "url": "https://www.iana.org/domains/reserved",
+      "title": "IANA-managed Reserved Domains",
+      "text": "# IANA-managed Reserved Domains\n\nCertain domains are set aside, and nominally registered to “IANA”, for specific policy or technical purposes.\n\n## Example domains\n\nAs described in RFC 2606 and RFC 6761, a number of domains such as example.com and example.org are maintained for documentation purposes. These domains may be used as illustrative examples in documents without prior coordination with us. They are not available for registration or transfer.\n\n## Test IDN top-level domains\n\nThese domains were temporarily delegated by IANA for the IDN Evaluation being conducted by ICANN.\n\n| Domain | Domain (A-label) | Language | Script |\n|---|---|---|---|\n| إختبار | XN--KGBECHTV | Arabic | Arabic |\n| آزمایشی | XN--HGBK6AJ7F53BBA | Persian | Arabic |\n| 测试 | XN--0ZWM56D | Chinese | Han (Simplified variant) |\n| 測試 | XN--G6W251D | Chinese | Han (Traditional variant) |\n| испытание | XN--80AKHBYKNJ4F | Russian | Cyrillic |\n| परीक्षा | XN--11B5B
+... [truncated, 2920 chars total]
+
+==============================================================================
+#31  export_dataset    [OK]
+------------------------------------------------------------------------------
+args: {"rows": [{"date": "2026-05-01", "value": "1.08"}, {"date": "2026-05-02", "value": "1.09"}], "format": "csv"}
+result:
+{
+  "exported": true,
+  "format": "csv",
+  "path": "/Users/artemk/.weboperator-mcp/source_cache/exports/dataset-20260628-162128.csv",
+  "row_count": 2,
+  "columns": [
+    "date",
+    "value"
+  ]
+}
+
+==============================================================================
+#32  reconcile_time_series    [OK]
+------------------------------------------------------------------------------
+args: {"series": [{"name": "ecb", "rows": [{"date": "2026-05-01", "value": "1.08"}, {"date": "2026-05-02", "value": "1.09"}]}, {"name": "fed", "rows": [{"date": "2026-05-01", "value": "1.10"}]}]}
+result:
+{
+  "on": "date",
+  "value_field": "value",
+  "series_names": [
+    "ecb",
+    "fed"
+  ],
+  "key_count": 2,
+  "aligned": [
+    {
+      "date": "2026-05-01",
+      "ecb": 1.08,
+      "fed": 1.1,
+      "delta_fed_vs_ecb": 0.02
+    },
+    {
+      "date": "2026-05-02",
+      "ecb": 1.09,
+      "fed": null
+    }
+  ],
+  "missing_keys": {
+    "ecb": [],
+    "fed": [
+      "2026-05-02"
+    ]
+  },
+  "outliers": {
+    "ecb": [],
+    "fed": []
+  }
+}
+
+==============================================================================
+#33  web_navigate    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://www.iana.org/domains/reserved"}
+result:
+{
+  "url": "https://www.iana.org/domains/reserved",
+  "title": "IANA-managed Reserved Domains"
+}
+
+==============================================================================
+#34  web_snapshot    [OK]
+------------------------------------------------------------------------------
+args: {}
+result:
+{
+  "url": "https://www.iana.org/domains/reserved",
+  "title": "IANA-managed Reserved Domains",
+  "elements": [
+    {
+      "ref": "@e1",
+      "role": "link",
+      "name": "/",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e2",
+      "role": "link",
+      "name": "Domains",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e3",
+      "role": "link",
+      "name": "Protocols",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e4",
+      "role": "link",
+      "name": "Numbers",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e5",
+      "role": "link",
+      "name": "About",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e6",
+      "role": "link",
+      "name": "RFC 2606",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e7",
+      "role": "link",
+      "name": "RFC 6761",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e8",
+      "role": "link",
+      "name": "IDN Evaluation",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e9",
+      "role": "link",
+      "name": "ICANN",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e10",
+      "role": "link",
+   
+... [truncated, 8808 chars total]
+
+==============================================================================
+#35  web_scroll    [OK]
+------------------------------------------------------------------------------
+args: {"direction": "down"}
+result:
+{
+  "ok": true,
+  "url": "https://www.iana.org/domains/reserved"
+}
+
+==============================================================================
+#36  web_extract    [OK]
+------------------------------------------------------------------------------
+args: {"refs": "visible"}
+result:
+{
+  "text": "Domains\nProtocols\nNumbers\nAbout\nIANA-managed Reserved Domains\n\nCertain domains are set aside, and nominally registered to “IANA”, for specific policy or technical purposes.\n\nExample domains\n\nAs described in RFC 2606 and RFC 6761, a number of domains such as example.com and example.org are maintained for documentation purposes. These domains may be used as illustrative examples in documents without prior coordination with us. They are not available for registration or transfer.\n\nTest IDN top-level domains\n\nThese domains were temporarily delegated by IANA for the IDN Evaluation being conducted by ICANN.\n\nDOMAIN\tDOMAIN (A-LABEL)\tLANGUAGE\tSCRIPT\nإختبار\tXN--KGBECHTV\tArabic\tArabic\nآزمایشی\tXN--HGBK6AJ7F53BBA\tPersian\tArabic\n测试\tXN--0ZWM56D\tChinese\tHan (Simplified variant)\n測試\tXN--G6W251D\tChinese\tHan (Traditional variant)\nиспытание\tXN--80AKHBYKNJ4F\tRussian\tCyrillic\nपरीक्षा\tXN--11B5BS3A9AJ6G\tHindi\tDevanagari (Nagari)\nδοκιμή\tXN--JXALPDLP\tGreek, Modern (1453-)\tGreek\n테스트\tXN--9T4B11YI5A\tKorean\tHangul (Hangŭl, Hangeul)\nטעסט\tXN--DEBA0AD\tYiddish\tHebrew\nテスト\tXN--ZCKZAH\tJapanese\tKatakana\nபரிட்சை\tXN--HLCJ6AYA9ESC7A\tTamil\tTamil\nP
+... [truncated, 2550 chars total]
+
+==============================================================================
+#37  browser_extract_tables    [OK]
+------------------------------------------------------------------------------
+args: {"max_tables": 1, "max_rows": 5}
+result:
+{
+  "url": "https://www.iana.org/domains/reserved",
+  "title": "IANA-managed Reserved Domains",
+  "tables": [
+    {
+      "caption": "",
+      "columns": [
+        "DOMAIN",
+        "DOMAIN (A-LABEL)",
+        "LANGUAGE",
+        "SCRIPT"
+      ],
+      "rows": [
+        {
+          "DOMAIN": "إختبار",
+          "DOMAIN (A-LABEL)": "XN--KGBECHTV",
+          "LANGUAGE": "Arabic",
+          "SCRIPT": "Arabic"
+        },
+        {
+          "DOMAIN": "آزمایشی",
+          "DOMAIN (A-LABEL)": "XN--HGBK6AJ7F53BBA",
+          "LANGUAGE": "Persian",
+          "SCRIPT": "Arabic"
+        },
+        {
+          "DOMAIN": "测试",
+          "DOMAIN (A-LABEL)": "XN--0ZWM56D",
+          "LANGUAGE": "Chinese",
+          "SCRIPT": "Han (Simplified variant)"
+        },
+        {
+          "DOMAIN": "測試",
+          "DOMAIN (A-LABEL)": "XN--G6W251D",
+          "LANGUAGE": "Chinese",
+          "SCRIPT": "Han (Traditional variant)"
+        },
+        {
+          "DOMAIN": "испытание",
+          "DOMAIN (A-LABEL)": "XN--80AKHBYKNJ4F",
+          "LANGUAGE": "Russian",
+          "SCRIPT": "Cyrillic"
+        }
+      ],
+      "row_count": 5
+    }
+  ],
+  "table_count": 1
+}
+
+==============================================================================
+#38  web_click    [OK]
+------------------------------------------------------------------------------
+args: {"ref": "@e1"}
+result:
+{
+  "ok": true,
+  "url": "https://www.iana.org/",
+  "title": "Internet Assigned Numbers Authority"
+}
+
+==============================================================================
+#39  web_navigate    [OK]
+------------------------------------------------------------------------------
+args: {"url": "https://duckduckgo.com"}
+result:
+{
+  "url": "https://duckduckgo.com/",
+  "title": "DuckDuckGo - Protection. Privacy. Peace of mind."
+}
+
+==============================================================================
+#40  web_snapshot    [OK]
+------------------------------------------------------------------------------
+args: {}
+result:
+{
+  "url": "https://duckduckgo.com/",
+  "title": "DuckDuckGo - Protection. Privacy. Peace of mind.",
+  "elements": [
+    {
+      "ref": "@e1",
+      "role": "link",
+      "name": "Learn about DuckDuckGo",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e2",
+      "role": "combobox",
+      "name": "Search with DuckDuckGo",
+      "tag": "input",
+      "type": "text"
+    },
+    {
+      "ref": "@e3",
+      "role": "button",
+      "name": "Search",
+      "tag": "button",
+      "type": ""
+    },
+    {
+      "ref": "@e4",
+      "role": "button",
+      "name": "Ask AI",
+      "tag": "button",
+      "type": ""
+    },
+    {
+      "ref": "@e5",
+      "role": "link",
+      "name": "Duck.ai",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e6",
+      "role": "button",
+      "name": "Menu",
+      "tag": "button",
+      "type": ""
+    },
+    {
+      "ref": "@e7",
+      "role": "button",
+      "name": "Set As Default Search",
+      "tag": "button",
+      "type": "button"
+    },
+    {
+      "ref": "@e8",
+      "role": "link",
+      "name": "Download Browser",
+      "tag": "a",
+      "type": ""
+    },
+    {
+      "ref": "@e9",
+      "role": "button",
+      "name": "AI S
+... [truncated, 24681 chars total]
+
+==============================================================================
+#41  web_type    [OK]
+------------------------------------------------------------------------------
+args: {"ref": "@e1", "text": "hello", "submit": false}
+result:
+{
+  "ok": false,
+  "error": "Locator.fill: Error: Element is not an <input>, <textarea>, <select> or [contenteditable] and does not have a role allowing [aria-readonly]\nCall log:\n  - waiting for locator(\"[data-weboperator-ref=\\\"@e1\\\"]\").first\n    - locator resolved to <a href=\"/about\" data-weboperator-ref=\"@e1\" title=\"Learn about DuckDuckGo\" aria-label=\"Learn about DuckDuckGo\" class=\"header_logoHorizontal__3Bs5Q header_logoText__qwUAe header_logoImg__rEtiC\">…</a>\n    - fill(\"\")\n  - attempting fill action\n    - waiting for element to be visible, enabled and editable\n"
+}
+
+==============================================================================
+#42  browser_set_date_range    [OK]
+------------------------------------------------------------------------------
+args: {"start_date": "2026-05-01", "end_date": "2026-05-05", "submit": false}
+result:
+{
+  "url": "https://duckduckgo.com/",
+  "title": "DuckDuckGo - Protection. Privacy. Peace of mind.",
+  "ok": false,
+  "filled": [],
+  "clicked_dates": [],
+  "clicked": null,
+  "input_count": 1,
+  "date_like_count": 0
+}
+
+==============================================================================
+#43  browser_extract_tables_for_date_range    [OK]
+------------------------------------------------------------------------------
+args: {"start_date": "2026-05-01", "end_date": "2026-05-05", "max_tables": 1, "max_rows": 5}
+result:
+{
+  "date_range": {
+    "url": "https://duckduckgo.com/",
+    "title": "DuckDuckGo - Protection. Privacy. Peace of mind.",
+    "ok": false,
+    "filled": [],
+    "clicked_dates": [],
+    "clicked": "search",
+    "input_count": 1,
+    "date_like_count": 0
+  },
+  "url": "https://duckduckgo.com/",
+  "title": "DuckDuckGo - Protection. Privacy. Peace of mind.",
+  "tables": [
+    {
+      "caption": "",
+      "columns": [
+        "column_1",
+        "column_2",
+        "column_3"
+      ],
+      "rows": [
+        {
+          "column_1": "Search privately by default",
+          "column_2": "",
+          "column_3": ""
+        },
+        {
+          "column_1": "Chat privately with popular AI chatbots (optional)",
+          "column_2": "",
+          "column_3": ""
+        },
+        {
+          "column_1": "Blocks 3rd-party trackers from Facebook, Google, and others",
+          "column_2": "",
+          "column_3": ""
+        },
+        {
+          "column_1": "Blocks targeted ads",
+          "column_2": "",
+          "column_3": ""
+        },
+        {
+          "column_1": "Blocks cookie pop-ups",
+          "column_2": "",
+          "column_3": ""
+        }
+      ],
+      "row_count": 5
+  
+... [truncated, 1229 chars total]
+
+==============================================================================
+#44  web_screenshot    [OK]
+------------------------------------------------------------------------------
+args: {"full_page": false, "ocr": false}
+result:
+{
+  "url": "https://duckduckgo.com/",
+  "title": "DuckDuckGo - Protection. Privacy. Peace of mind.",
+  "path": "/Users/artemk/.weboperator-mcp/source_cache/screenshots/15295c63c0ec56ce.png",
+  "bytes": 74144,
+  "full_page": false
+}
+
+==============================================================================
+TOTAL TOOLS RUN: 44
