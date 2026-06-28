@@ -8,7 +8,7 @@ Discovery and reading:
 
 | Tool | Description |
 |------|-------------|
-| `web_search` | Bing + DuckDuckGo search returning links and snippets. Snippets are discovery only. |
+| `web_search` | Search via a keyed provider (Tavily/Brave/Google) when available, else Bing + DuckDuckGo. Snippets are discovery only. |
 | `web_search_recent` | Web search restricted to a recency window (day/week/month/year) via DuckDuckGo's date filter. |
 | `web_deep_search` | Search, fetch, extract, rerank, and return source context. |
 | `web_read` | Fetch one URL, extract text, classify source quality, and persist cache metadata. |
@@ -152,6 +152,23 @@ Visible browser:
   }
 }
 ```
+
+## Search Backends
+
+`web_search` (and everything built on it — `web_deep_search`, the agent) routes through
+a provider layer. When an API key is set it uses that provider; otherwise it falls back to
+scraping Bing + DuckDuckGo. Results are normalized to one shape regardless of backend.
+
+| Provider | Env vars | Notes |
+|----------|----------|-------|
+| Tavily | `TAVILY_API_KEY` | LLM-oriented search API. |
+| Brave | `BRAVE_API_KEY` | Independent web index. |
+| Google | `GOOGLE_API_KEY` + `GOOGLE_CSE_ID` | Programmable Search (Custom Search JSON API). |
+| Bing + DuckDuckGo | none | Default fallback; scraped, no key required. |
+
+`auto` (default) tries every provider that has a key, in order Tavily → Brave → Google,
+then falls back to scraping. Force one with the `provider` argument
+(`tavily` | `brave` | `google` | `scrape`).
 
 ## Runtime Data
 

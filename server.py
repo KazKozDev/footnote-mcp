@@ -72,13 +72,14 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="web_search",
-            description="Search the web with Bing + DuckDuckGo. Returns titles, URLs, snippets and scores. Fast, no page fetching.",
+            description="Search the web. Uses a keyed provider (Tavily/Brave/Google) when an API key is set, otherwise falls back to scraping Bing + DuckDuckGo. Returns titles, URLs, snippets and scores.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "lang": {"type": "string", "description": "Language code: en, ru, etc.", "default": "en"},
                     "num": {"type": "integer", "description": "Max results to return", "default": 10},
+                    "provider": {"type": "string", "description": "auto | tavily | brave | google | scrape", "default": "auto"},
                 },
                 "required": ["query"],
             },
@@ -620,6 +621,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 query=arguments["query"],
                 lang=arguments.get("lang", "en"),
                 num=arguments.get("num", 10),
+                provider=arguments.get("provider", "auto"),
             )
         elif name == "web_deep_search":
             result = web_deep_search(

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from bs4 import BeautifulSoup
+from curl_cffi import requests as http
 
 from diagnostics import log
 from fetch import _get
@@ -237,9 +239,116 @@ def merge_results(bing_results, ddg_results, num=20):
     ]
 
 
-def search(query, num=20, lang="en", debug=False):
+# ── Keyed API search providers (reliable; used before scraping when a key is set) ──
+
+def _normalize_api(items, engine):
+    """Map provider results into the merged search shape, scored by rank."""
+    out = []
+    for rank, item in enumerate(items, 1):
+        url = item.get("url", "")
+        if not url:
+            continue
+        out.append({
+            "title": (item.get("title") or "").strip(),
+            "url": url,
+            "snippet": (item.get("snippet") or "").strip(),
+            "score": round(1.0 / rank, 3),
+            "engines": [engine],
+        })
+    return out
+
+
+def search_tavily(query, num=10, lang="en"):
+    key = os.getenv("TAVILY_API_KEY")
+    if not key:
+        return []
+    resp = http.post(
+        "https://api.tavily.com/search",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={"query": query, "max_results": min(num, 20), "search_depth": "basic"},
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"tavily HTTP {resp.status_code}")
+    results = resp.json().get("results", []) or []
+    items = [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")} for r in results]
+    return _normalize_api(items, "tavily")
+
+
+def search_brave(query, num=10, lang="en"):
+    key = os.getenv("BRAVE_API_KEY")
+    if not key:
+        return []
+    resp = http.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        headers={"X-Subscription-Token": key, "Accept": "application/json"},
+        params={"q": query, "count": min(num, 20)},
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"brave HTTP {resp.status_code}")
+    results = (resp.json().get("web", {}) or {}).get("results", []) or []
+    items = [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("description", "")} for r in results]
+    return _normalize_api(items, "brave")
+
+
+def search_google(query, num=10, lang="en"):
+    key = os.getenv("GOOGLE_API_KEY")
+    cx = os.getenv("GOOGLE_CSE_ID")
+    if not (key and cx):
+        return []
+    resp = http.get(
+        "https://www.googleapis.com/customsearch/v1",
+        params={"key": key, "cx": cx, "q": query, "num": min(num, 10), "hl": lang},
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"google HTTP {resp.status_code}")
+    results = resp.json().get("items", []) or []
+    items = [{"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")} for r in results]
+    return _normalize_api(items, "google")
+
+
+# Map provider name → function name; resolved via globals() at call time so the
+# function is looked up live (testable, and survives reassignment).
+_API_PROVIDERS = {"tavily": "search_tavily", "brave": "search_brave", "google": "search_google"}
+
+
+def _provider_order(provider):
+    """Decide which keyed providers to try, in priority order.
+
+    auto: every provider that has its key set (tavily → brave → google).
+    A specific name forces just that provider. 'scrape' skips APIs entirely.
+    Scraping Bing+DDG is always the final fallback regardless.
+    """
+    provider = (provider or "auto").lower()
+    keyed = {
+        "tavily": bool(os.getenv("TAVILY_API_KEY")),
+        "brave": bool(os.getenv("BRAVE_API_KEY")),
+        "google": bool(os.getenv("GOOGLE_API_KEY") and os.getenv("GOOGLE_CSE_ID")),
+    }
+    if provider in _API_PROVIDERS:
+        return [provider]
+    if provider == "scrape":
+        return []
+    return [name for name in ("tavily", "brave", "google") if keyed[name]]
+
+
+def search(query, num=20, lang="en", debug=False, provider="auto"):
     import core
 
+    # 1. Keyed API providers first — reliable, no scraping. First non-empty wins.
+    for name in _provider_order(provider):
+        try:
+            results = globals()[_API_PROVIDERS[name]](query, num=num, lang=lang)
+            if results:
+                log.info("[SEARCH] provider=%s -> %s results", name, len(results))
+                return results[:num]
+            log.info("[SEARCH] provider=%s returned 0 results, trying next", name)
+        except Exception as exc:
+            log.warning("[SEARCH] provider %s failed: %s", name, exc)
+
+    # 2. Fallback: scrape Bing + DDG in parallel and merge (original behaviour).
     bing_r = []
     ddg_r = []
 

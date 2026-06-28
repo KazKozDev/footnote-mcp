@@ -9,7 +9,7 @@ def test_web_search_formats_results(monkeypatch):
     monkeypatch.setattr(
         tools_search,
         "search",
-        lambda query, num=10, lang="en": [
+        lambda query, num=10, lang="en", provider="auto": [
             {"title": "A", "url": "https://example.com/a", "snippet": "sa", "score": 1.0, "engines": ["x"]},
             {"title": "B", "url": "https://example.com/b", "snippet": "sb", "score": 0.5, "engines": ["y"]},
         ],

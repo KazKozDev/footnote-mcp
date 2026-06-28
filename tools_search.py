@@ -9,11 +9,16 @@ from extract import extract_content
 from tools_data import _read_cache, _write_cache, classify_source
 
 
-def web_search(query: str, lang: str = "en", num: int = 10) -> dict:
-    """Search Bing + DDG, return merged results with snippets."""
-    results = search(query, num=num, lang=lang)
+def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto") -> dict:
+    """Search via a keyed provider (Tavily/Brave/Google) when available, else Bing + DDG.
+
+    ``provider``: auto | tavily | brave | google | scrape. Results are merged into a
+    single shape regardless of backend.
+    """
+    results = search(query, num=num, lang=lang, provider=provider)
     return {
         "query": query,
+        "provider": provider,
         "count": len(results),
         "results": [
             {"title": r["title"], "url": r["url"], "snippet": r["snippet"], "score": r["score"], "engines": r["engines"]}
