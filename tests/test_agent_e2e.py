@@ -7,7 +7,7 @@ import agent.agent as agent_module
 
 
 def test_agent_graph_completes_with_fake_model_and_fake_tool(monkeypatch):
-    def fake_chat(model, messages, tools=None, system="", temperature=0.3, json_mode=False, num_predict=32768):
+    def fake_chat(model, messages, tools=None, system="", temperature=0.3, json_mode=False, num_predict=32768, format_schema=None):
         if system == agent_module.REQUIREMENTS_SYSTEM_PROMPT:
             return {
                 "content": json.dumps(

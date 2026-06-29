@@ -128,6 +128,7 @@ def _ollama_chat(
     temperature: float = 0.3,
     json_mode: bool = False,
     num_predict: int = 32768,
+    format_schema: dict | None = None,
 ) -> dict:
     """Call ollama, normalize tool_calls to have 'id'."""
     msgs = []
@@ -165,7 +166,10 @@ def _ollama_chat(
         msgs.append(entry)
 
     kwargs: dict = {"model": model, "messages": msgs, "tools": tools, "options": {"temperature": temperature, "num_predict": num_predict}, "think": False}
-    if json_mode and not tools:
+    if format_schema and not tools:
+        # Constrained decoding: Ollama forces the output to match this JSON schema.
+        kwargs["format"] = format_schema
+    elif json_mode and not tools:
         kwargs["format"] = "json"
     response = ollama.chat(**kwargs)
     msg = response["message"]
@@ -876,6 +880,32 @@ def _tool_call_from_python_like_step(step: str) -> dict | None:
     return {"function": {"name": name, "arguments": _normalize_tool_arguments(name, args)}}
 
 
+def _parse_step_kwargs(raw_arg: str) -> dict | None:
+    """Parse a 'key=value, key=value' argument string into a dict.
+
+    Returns None when the argument is not in that form (e.g. a bare URL or query),
+    so callers can fall back to treating raw_arg as a single positional value.
+    A bare URL never matches because it starts with 'scheme:' not 'key='.
+    """
+    if not re.match(r"^\s*\w+\s*=", raw_arg):
+        return None
+    kwargs: dict = {}
+    for part in re.split(r",\s*(?=\w+\s*=)", raw_arg):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        low = value.lower()
+        if low in ("true", "false"):
+            kwargs[key] = (low == "true")
+        elif value.isdigit():
+            kwargs[key] = int(value)
+        else:
+            kwargs[key] = value
+    return kwargs or None
+
+
 def _tool_call_from_step(step: str) -> dict | None:
     python_like = _tool_call_from_python_like_step(step)
     if python_like:
@@ -888,6 +918,17 @@ def _tool_call_from_step(step: str) -> dict | None:
     raw_arg = raw_arg.strip()
     if not raw_arg:
         return None
+
+    # Model may emit "tool: url=..., lang=en, use_cache=false" instead of "tool: <url>".
+    # Parse those kwargs so the URL/query isn't swallowed whole as one malformed value.
+    kwargs = _parse_step_kwargs(raw_arg)
+    if kwargs:
+        url_tools = {"web_read", "web_extract_tables", "web_detect_downloads",
+                     "web_parse_file", "web_fetch_json", "classify_source", "source_cache_get"}
+        if name in url_tools and "url" in kwargs:
+            return {"function": {"name": name, "arguments": kwargs}}
+        if name in {"web_search", "web_deep_search"} and "query" in kwargs:
+            return {"function": {"name": name, "arguments": kwargs}}
 
     if name == "web_search":
         return {"function": {"name": "web_search", "arguments": {"query": raw_arg, "num": 10}}}
@@ -1334,7 +1375,7 @@ Tool roles:
 
 Rules:
 - Each step must be ONE tool call
-- Never write Python-like function syntax such as check_date_completeness(...). Use "tool_name: argument" or "tool_name: {{json_object}}" only.
+- Each step is one tool call expressed as an object {{"tool": <tool name>, "arg": <single argument>}}. For url tools the arg is the URL; for search tools the arg is the query; for tools taking structured input the arg is a JSON object string.
 - generate_search_queries is ONLY for structured data/API/CSV/historical dataset discovery. Do NOT use it for news, current events, or general information queries.
 - For news or general queries, use web_search directly with ONE short query per step.
 - web_search queries must NOT be wrapped in double quotes. Use plain keywords only.
@@ -1355,7 +1396,7 @@ Rules:
 - If this is an additional evidence round, use a different query strategy and fresh sources.
 - Prefer primary/official sources when the task asks about a factual current state, historical data, financial data, legal status, official statistics, or exact tables.
 - Do not mix incompatible units, entities, base/quote currencies, or denominators.
-- Output ONLY a JSON array. No explanations."""
+- Output ONLY a JSON object of the form {{"steps": [{{"tool": "...", "arg": "..."}}, ...]}}. No explanations."""
 
 OBSERVATION_SYSTEM_PROMPT = f"""Today is {TODAY}. You are the search controller's observation diagnostician.
 
@@ -1492,6 +1533,60 @@ async def requirements_node(state: AgentState, model: str, _tools: list[dict]) -
     return {"requirements_result": requirements, "iteration": iteration}
 
 
+PLAN_STEPS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string"},
+                    "arg": {"type": "string"},
+                },
+                "required": ["tool", "arg"],
+            },
+        },
+    },
+    "required": ["steps"],
+}
+
+
+def _steps_from_plan_objects(content: str) -> list[str]:
+    """Convert the planner output into canonical 'tool: arg' step strings.
+
+    Schema-constrained decoding (GGUF/llama.cpp) returns {"steps":[{tool,arg}]},
+    but MLX models ignore the schema, so we also accept a bare list of step
+    objects, a single step object, or the legacy list of 'tool: arg' strings.
+    When we build the string from a {tool,arg} object the format is always clean.
+    """
+    parsed = _json_loads_best_effort(content, None)
+
+    # Normalize to a list of items (objects or strings).
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get("steps"), list):
+            items = parsed["steps"]
+        elif parsed.get("tool"):
+            items = [parsed]  # single bare step object
+        else:
+            items = []
+    elif isinstance(parsed, list):
+        items = parsed
+    else:
+        items = []
+
+    steps: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            tool = str(item.get("tool", "")).strip()
+            arg = str(item.get("arg", "")).strip()
+            if tool and arg:
+                steps.append(f"{tool}: {arg}")
+        elif isinstance(item, str) and ":" in item:
+            steps.append(item.strip())  # legacy "tool: arg" string
+    return steps
+
+
 async def plan_node(state: AgentState, model: str, _tools: list[dict]) -> dict:
     """Break task into steps on first call, or use replanned steps."""
     task = state["task"]
@@ -1544,15 +1639,13 @@ Create a plan (JSON array of step strings)."""
     response = _ollama_chat(
         model,
         [{"role": "user", "content": planning_input}],
-        tools=None, json_mode=True,
+        tools=None,
         system=PLAN_PROMPT,
+        format_schema=PLAN_STEPS_SCHEMA,
     )
-    content = response.get("content", "[]")
+    content = response.get("content", "{}")
 
-    steps = _json_loads_best_effort(content, [f"web_search: {task}"])
-    if not isinstance(steps, list):
-        steps = [f"web_search: {task}"]
-
+    steps = _steps_from_plan_objects(content)
     if not steps:
         steps = [f"web_search: {task}"]
 
