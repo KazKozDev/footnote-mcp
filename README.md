@@ -141,13 +141,8 @@ python server.py
 python server.py --headed
 ```
 
-Interactive agent:
-
-```bash
-./agent.command
-```
-
-`agent.command` creates `.venv`, installs dependencies when `requirements.txt` changes, installs Playwright Chromium, and launches `agent/agent.py` from the virtual environment.
+The LangGraph research agent that drives this server lives in a separate project,
+[weboperator-agent](../weboperator-agent) (it is an MCP *client* of this server).
 
 ## MCP Client Config
 
@@ -326,7 +321,6 @@ Offline unit and smoke tests:
 
 ```bash
 python -m pytest \
-  tests/test_agent_e2e.py \
   tests/test_tools_data.py \
   tests/test_tools_extra.py \
   tests/test_tools_search.py \

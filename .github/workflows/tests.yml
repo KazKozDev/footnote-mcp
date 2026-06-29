@@ -23,20 +23,15 @@ jobs:
       - name: Compile
         run: |
           python -m py_compile \
-            agent/agent.py \
             server.py \
+            weboperator_mcp.py \
             tools_data.py \
             tools_search.py \
             tools_browser.py \
-            test_agent.py
+            tools_extra.py \
+            scraper.py \
+            semantic.py
 
       - name: Test
         run: |
-          python -m pytest \
-            tests/test_agent_e2e.py \
-            tests/test_tools_data.py \
-            tests/test_tools_search.py \
-            tests/test_tools_browser.py \
-            tests/test_server_dispatch.py \
-            tests/test_mcp_smoke.py \
-            -q
+          python -m pytest tests/ -q
