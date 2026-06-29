@@ -20,7 +20,7 @@ def _ollama_host() -> str:
 
 
 def embed_model() -> str:
-    return os.getenv("WEBOPERATOR_EMBED_MODEL", "bge-m3")
+    return os.getenv("FOOTNOTE_EMBED_MODEL", "bge-m3")
 
 
 def embed_texts(texts, model=None, timeout=30):

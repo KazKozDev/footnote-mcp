@@ -52,7 +52,7 @@ from tools_data import (
     web_parse_file,
 )
 
-server = Server("weboperator")
+server = Server("footnote")
 
 _browser: WebBrowser | None = None
 _headed: bool = False
@@ -868,12 +868,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
     except Exception as e:
-        print(f"[weboperator] tool '{name}' failed: {e}", file=sys.stderr)
+        print(f"[footnote] tool '{name}' failed: {e}", file=sys.stderr)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, ensure_ascii=False))]
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="WebOperator MCP server")
+    parser = argparse.ArgumentParser(description="footnote MCP server")
     parser.add_argument("--headed", action="store_true", help="Show browser window")
     args = parser.parse_args()
 
@@ -881,7 +881,7 @@ async def main():
     _headed = args.headed
 
     init_opts = InitializationOptions(
-        server_name="weboperator",
+        server_name="footnote",
         server_version="1.0.0",
         capabilities=ServerCapabilities(tools={}),
     )

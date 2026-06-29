@@ -1,4 +1,4 @@
-# WebOperator MCP Server
+# footnote MCP Server
 
 MCP server and LangGraph research agent for source-grounded web research.
 
@@ -74,24 +74,24 @@ Browser fallback:
 
 ### One command (pipx / uvx)
 
-The server is a package with a `weboperator-mcp` entry point. Install it isolated:
+The server is a package with a `footnote-mcp` entry point. Install it isolated:
 
 ```bash
-pipx install /path/to/weboperator-mcp          # or:  pipx install git+<repo-url>
+pipx install /path/to/footnote-mcp          # or:  pipx install git+<repo-url>
 python -m playwright install chromium           # one-time: fetch the headless browser
 ```
 
 Or run it ad hoc without installing, straight from the source dir:
 
 ```bash
-uvx --from /path/to/weboperator-mcp weboperator-mcp
+uvx --from /path/to/footnote-mcp footnote-mcp
 ```
 
 ### Docker (no Python/browser setup)
 
 ```bash
-docker build -t weboperator-mcp .
-docker run -i --rm weboperator-mcp
+docker build -t footnote-mcp .
+docker run -i --rm footnote-mcp
 ```
 
 The image bundles Chromium and tesseract, so there is nothing else to install.
@@ -120,7 +120,7 @@ Optional local NLI backend:
 python -m pip install -r requirements-nli.txt
 ```
 
-Then call `evidence_entailment` with `backend="local_nli"`. The default model is controlled by `WEBOPERATOR_NLI_MODEL`.
+Then call `evidence_entailment` with `backend="local_nli"`. The default model is controlled by `FOOTNOTE_NLI_MODEL`.
 
 ## OCR
 
@@ -155,8 +155,8 @@ as needed (see Search Backends).
 ```json
 {
   "mcpServers": {
-    "weboperator": {
-      "command": "weboperator-mcp"
+    "footnote": {
+      "command": "footnote-mcp"
     }
   }
 }
@@ -167,9 +167,9 @@ as needed (see Search Backends).
 ```json
 {
   "mcpServers": {
-    "weboperator": {
+    "footnote": {
       "command": "uvx",
-      "args": ["--from", "/path/to/weboperator-mcp", "weboperator-mcp"],
+      "args": ["--from", "/path/to/footnote-mcp", "footnote-mcp"],
       "env": { "TAVILY_API_KEY": "tvly-..." }
     }
   }
@@ -181,9 +181,9 @@ as needed (see Search Backends).
 ```json
 {
   "mcpServers": {
-    "weboperator": {
+    "footnote": {
       "command": "docker",
-      "args": ["run", "-i", "--rm", "weboperator-mcp"]
+      "args": ["run", "-i", "--rm", "footnote-mcp"]
     }
   }
 }
@@ -194,10 +194,10 @@ as needed (see Search Backends).
 ```json
 {
   "mcpServers": {
-    "weboperator": {
+    "footnote": {
       "command": "python",
       "args": ["server.py"],
-      "cwd": "/path/to/weboperator-mcp"
+      "cwd": "/path/to/footnote-mcp"
     }
   }
 }
@@ -226,7 +226,7 @@ then falls back to scraping. Force one with the `provider` argument
 *meaning* rather than keyword overlap: it over-fetches candidates, embeds the query and
 each result with a local ollama embedding model, and sorts by cosine similarity (each
 result gains a `semantic_score`). Best-effort — if ollama is unavailable the original
-order is returned. The model is `WEBOPERATOR_EMBED_MODEL` (default `bge-m3`).
+order is returned. The model is `FOOTNOTE_EMBED_MODEL` (default `bge-m3`).
 
 ## Verification Benchmark
 
@@ -264,42 +264,42 @@ trace are returned in `fetch_tier` / `scrape_tiers`.
 | Tier | Method | Enabled by |
 |------|--------|-----------|
 | 1 | HTTP (curl_cffi TLS impersonation) | always (default) |
-| 2 | HTTP through a rotating proxy | `WEBOPERATOR_PROXIES` set |
-| 3 | Headless Chromium (runs JavaScript) | `WEBOPERATOR_BROWSER_FALLBACK=1` (default on) |
+| 2 | HTTP through a rotating proxy | `FOOTNOTE_PROXIES` set |
+| 3 | Headless Chromium (runs JavaScript) | `FOOTNOTE_BROWSER_FALLBACK=1` (default on) |
 | 4 | Chromium through a proxy | proxies + browser |
-| 5 | Hosted scrape API (Firecrawl / ScrapingBee) | `WEBOPERATOR_SCRAPE_API` set |
+| 5 | Hosted scrape API (Firecrawl / ScrapingBee) | `FOOTNOTE_SCRAPE_API` set |
 
 With nothing configured it behaves like the plain HTTP path plus an automatic browser
 fallback for JavaScript-rendered pages.
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `WEBOPERATOR_BROWSER_FALLBACK` | `1` | Escalate blocked/JS pages to headless Chromium. |
-| `WEBOPERATOR_PROXIES` | _(none)_ | Comma-separated proxy URLs; sticky per domain with health tracking. |
-| `WEBOPERATOR_SCRAPE_API` | _(none)_ | `firecrawl` or `scrapingbee` (needs `FIRECRAWL_API_KEY` / `SCRAPINGBEE_API_KEY`). |
-| `WEBOPERATOR_DOMAIN_RPS` / `_BURST` | `3` / `5` | Per-domain rate limit (token bucket). |
-| `WEBOPERATOR_BREAKER_THRESHOLD` / `_COOLDOWN` | `5` / `120` | Per-domain circuit breaker. |
-| `WEBOPERATOR_NEGCACHE_TTL` | `300` | Seconds to remember a blocked URL. |
-| `WEBOPERATOR_THIN_CONTENT_CHARS` | `200` | Below this extracted length a script-heavy page counts as a JS shell. |
+| `FOOTNOTE_BROWSER_FALLBACK` | `1` | Escalate blocked/JS pages to headless Chromium. |
+| `FOOTNOTE_PROXIES` | _(none)_ | Comma-separated proxy URLs; sticky per domain with health tracking. |
+| `FOOTNOTE_SCRAPE_API` | _(none)_ | `firecrawl` or `scrapingbee` (needs `FIRECRAWL_API_KEY` / `SCRAPINGBEE_API_KEY`). |
+| `FOOTNOTE_DOMAIN_RPS` / `_BURST` | `3` / `5` | Per-domain rate limit (token bucket). |
+| `FOOTNOTE_BREAKER_THRESHOLD` / `_COOLDOWN` | `5` / `120` | Per-domain circuit breaker. |
+| `FOOTNOTE_NEGCACHE_TTL` | `300` | Seconds to remember a blocked URL. |
+| `FOOTNOTE_THIN_CONTENT_CHARS` | `200` | Below this extracted length a script-heavy page counts as a JS shell. |
 
 ## Runtime Data
 
 Persistent cache:
 
 ```text
-~/.weboperator-mcp/source_cache/
+~/.footnote-mcp/source_cache/
 ```
 
 Persistent research memory:
 
 ```text
-~/.weboperator-mcp/research_memory.json
+~/.footnote-mcp/research_memory.json
 ```
 
 Override cache location:
 
 ```bash
-WEBOPERATOR_SOURCE_CACHE=/path/to/cache python server.py
+FOOTNOTE_SOURCE_CACHE=/path/to/cache python server.py
 ```
 
 ## Calendars

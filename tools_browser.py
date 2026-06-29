@@ -42,8 +42,8 @@ INTERACTIVE_SNAPSHOT_JS = """
     '[role="switch"]'
   ].join(',');
 
-  document.querySelectorAll('[data-weboperator-ref]').forEach((el) => {
-    el.removeAttribute('data-weboperator-ref');
+  document.querySelectorAll('[data-footnote-ref]').forEach((el) => {
+    el.removeAttribute('data-footnote-ref');
   });
 
   const roleFor = (el) => {
@@ -94,7 +94,7 @@ INTERACTIVE_SNAPSHOT_JS = """
     .slice(0, 200)
     .map((el, index) => {
       const ref = `@e${index + 1}`;
-      el.setAttribute('data-weboperator-ref', ref);
+      el.setAttribute('data-footnote-ref', ref);
       return {
         ref,
         role: roleFor(el),
@@ -158,7 +158,7 @@ class WebBrowser:
     async def _locator_for_ref(self, ref: str):
         if not re.fullmatch(r"@e\d+", ref):
             return None
-        locator = self._page.locator(f'[data-weboperator-ref="{ref}"]').first
+        locator = self._page.locator(f'[data-footnote-ref="{ref}"]').first
         if await locator.count() == 0:
             return None
         return locator
@@ -397,7 +397,7 @@ class WebBrowser:
         import hashlib
         import os
 
-        out_dir = Path(os.getenv("WEBOPERATOR_SOURCE_CACHE", "~/.weboperator-mcp/source_cache")).expanduser() / "screenshots"
+        out_dir = Path(os.getenv("FOOTNOTE_SOURCE_CACHE", "~/.footnote-mcp/source_cache")).expanduser() / "screenshots"
         out_dir.mkdir(parents=True, exist_ok=True)
         name = hashlib.sha256(f"{self._page.url}|{full_page}".encode("utf-8")).hexdigest()[:16] + ".png"
         path = out_dir / name

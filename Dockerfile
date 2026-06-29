@@ -22,5 +22,5 @@ RUN python -m playwright install --with-deps chromium
 COPY . .
 RUN pip install .
 
-# MCP speaks over stdio; clients launch this with `docker run -i --rm weboperator-mcp`.
-ENTRYPOINT ["weboperator-mcp"]
+# MCP speaks over stdio; clients launch this with `docker run -i --rm footnote-mcp`.
+ENTRYPOINT ["footnote-mcp"]

@@ -25,7 +25,7 @@ def test_detect_block_challenge_and_js_markers():
 
 
 def test_detect_block_thin_js_shell(monkeypatch):
-    monkeypatch.setenv("WEBOPERATOR_THIN_CONTENT_CHARS", "200")
+    monkeypatch.setenv("FOOTNOTE_THIN_CONTENT_CHARS", "200")
     shell = "<html><head>" + ("<meta x='1'>" * 200) + "</head><body><div id=root></div><script src=a.js></script></body></html>"
     blocked, reason = scraper.detect_block(200, shell)
     assert blocked is True and reason == "thin_js_shell"
@@ -66,14 +66,14 @@ def test_circuit_breaker_opens_after_threshold():
 # ── negative cache ──
 
 def test_negative_cache_roundtrip(monkeypatch):
-    monkeypatch.setenv("WEBOPERATOR_NEGCACHE_TTL", "60")
+    monkeypatch.setenv("FOOTNOTE_NEGCACHE_TTL", "60")
     nc = scraper.NegativeCache()
     nc.put("https://x.com", "http_403")
     assert nc.get("https://x.com") == "http_403"
 
 
 def test_negative_cache_disabled(monkeypatch):
-    monkeypatch.setenv("WEBOPERATOR_NEGCACHE_TTL", "0")
+    monkeypatch.setenv("FOOTNOTE_NEGCACHE_TTL", "0")
     nc = scraper.NegativeCache()
     nc.put("https://x.com", "http_403")
     assert nc.get("https://x.com") is None
@@ -82,19 +82,19 @@ def test_negative_cache_disabled(monkeypatch):
 # ── proxy pool ──
 
 def test_proxy_pool_sticky_and_health(monkeypatch):
-    monkeypatch.setenv("WEBOPERATOR_PROXIES", "http://p1:8000,http://p2:8000")
+    monkeypatch.setenv("FOOTNOTE_PROXIES", "http://p1:8000,http://p2:8000")
     pool = scraper.ProxyPool()
     assert pool.available() is True
     first = pool.get("a.com")
     assert pool.get("a.com") == first  # sticky per domain
     pool.report(first, ok=False)       # mark dead
-    monkeypatch.setenv("WEBOPERATOR_PROXY_COOLDOWN", "300")
+    monkeypatch.setenv("FOOTNOTE_PROXY_COOLDOWN", "300")
     second = pool.get("a.com", rotate=True)
     assert second != first             # avoids dead proxy
 
 
 def test_proxy_pool_empty_when_unset(monkeypatch):
-    monkeypatch.setenv("WEBOPERATOR_PROXIES", "")
+    monkeypatch.setenv("FOOTNOTE_PROXIES", "")
     pool = scraper.ProxyPool()
     assert pool.available() is False
     assert pool.get("a.com") is None
@@ -172,7 +172,7 @@ def test_fetch_hard_failure_returns_error():
 # ── orchestrator: negative cache short-circuits ──
 
 def test_fetch_negative_cache_short_circuits(monkeypatch):
-    monkeypatch.setenv("WEBOPERATOR_NEGCACHE_TTL", "60")
+    monkeypatch.setenv("FOOTNOTE_NEGCACHE_TTL", "60")
     scraper._NEG_CACHE.put("https://x.com", "http_403")
     calls = {"n": 0}
 

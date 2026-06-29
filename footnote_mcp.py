@@ -1,4 +1,4 @@
-"""Console entry point for the WebOperator MCP server.
+"""Console entry point for the footnote MCP server.
 
 The runtime is a set of flat top-level modules (server, core, search, ...). This
 uniquely-named launcher prepends its own directory to sys.path so those modules

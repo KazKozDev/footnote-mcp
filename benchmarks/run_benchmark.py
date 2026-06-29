@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trustworthiness benchmark + demo for the WebOperator verification stack.
+"""Trustworthiness benchmark + demo for the footnote verification stack.
 
 Measures how well the server distinguishes claims that are *supported* by their
 source from claims that are not (unsupported / contradicted). Also demos the
@@ -122,7 +122,7 @@ def _pct(value):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="WebOperator trustworthiness benchmark")
+    parser = argparse.ArgumentParser(description="footnote trustworthiness benchmark")
     parser.add_argument("--backend", default="heuristic", help="heuristic | ollama | local_nli | auto")
     parser.add_argument("--write", default="", help="Optional path to write a markdown report")
     args = parser.parse_args()

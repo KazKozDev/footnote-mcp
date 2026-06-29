@@ -23,9 +23,9 @@ from bs4 import BeautifulSoup
 from fetch import _get, fetch_page
 
 
-CACHE_DIR = Path(os.getenv("WEBOPERATOR_SOURCE_CACHE", "~/.weboperator-mcp/source_cache")).expanduser()
+CACHE_DIR = Path(os.getenv("FOOTNOTE_SOURCE_CACHE", "~/.footnote-mcp/source_cache")).expanduser()
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-RECIPE_STORE_PATH = Path(os.getenv("WEBOPERATOR_RECIPE_STORE", "~/.weboperator-mcp/extraction_recipes.json")).expanduser()
+RECIPE_STORE_PATH = Path(os.getenv("FOOTNOTE_RECIPE_STORE", "~/.footnote-mcp/extraction_recipes.json")).expanduser()
 
 
 def _cache_key(url: str) -> str:
@@ -1020,7 +1020,7 @@ def _heuristic_entailment(claim: str, source_excerpt: str) -> dict:
 
 
 def _local_nli_entailment(claim: str, source_excerpt: str, model: str | None = None) -> dict:
-    model = model or os.getenv("WEBOPERATOR_NLI_MODEL") or "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+    model = model or os.getenv("FOOTNOTE_NLI_MODEL") or "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
     try:
         from transformers import pipeline
     except ImportError:
@@ -1068,7 +1068,7 @@ def _local_nli_entailment(claim: str, source_excerpt: str, model: str | None = N
 
 
 def _ollama_entailment(claim: str, source_excerpt: str, model: str | None = None, timeout: int = 25) -> dict:
-    model = model or os.getenv("WEBOPERATOR_ENTAILMENT_MODEL") or os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
+    model = model or os.getenv("FOOTNOTE_ENTAILMENT_MODEL") or os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
     endpoint = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
     system = """You are a strict evidence entailment judge.
 Use only the source excerpt.

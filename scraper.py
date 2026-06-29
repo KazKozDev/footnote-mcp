@@ -72,7 +72,7 @@ def _strip_tags(html: str) -> str:
 
 
 def _thin_threshold() -> int:
-    return int(os.getenv("WEBOPERATOR_THIN_CONTENT_CHARS", "200"))
+    return int(os.getenv("FOOTNOTE_THIN_CONTENT_CHARS", "200"))
 
 
 def detect_block(status, html, error=None):
@@ -108,8 +108,8 @@ class DomainRateLimiter:
         self._state: dict[str, tuple[float, float]] = {}
 
     def _params(self):
-        rps = self._rps if self._rps is not None else float(os.getenv("WEBOPERATOR_DOMAIN_RPS", "3"))
-        burst = self._burst if self._burst is not None else float(os.getenv("WEBOPERATOR_DOMAIN_BURST", "5"))
+        rps = self._rps if self._rps is not None else float(os.getenv("FOOTNOTE_DOMAIN_RPS", "3"))
+        burst = self._burst if self._burst is not None else float(os.getenv("FOOTNOTE_DOMAIN_BURST", "5"))
         return rps, burst
 
     def acquire(self, domain: str) -> float:
@@ -146,8 +146,8 @@ class CircuitBreaker:
         self._open_until: dict[str, float] = {}
 
     def _params(self):
-        threshold = self._threshold if self._threshold is not None else int(os.getenv("WEBOPERATOR_BREAKER_THRESHOLD", "5"))
-        cooldown = self._cooldown if self._cooldown is not None else float(os.getenv("WEBOPERATOR_BREAKER_COOLDOWN", "120"))
+        threshold = self._threshold if self._threshold is not None else int(os.getenv("FOOTNOTE_BREAKER_THRESHOLD", "5"))
+        cooldown = self._cooldown if self._cooldown is not None else float(os.getenv("FOOTNOTE_BREAKER_COOLDOWN", "120"))
         return threshold, cooldown
 
     def is_open(self, domain: str) -> bool:
@@ -190,7 +190,7 @@ class NegativeCache:
             return None
 
     def put(self, url: str, reason: str):
-        ttl = float(os.getenv("WEBOPERATOR_NEGCACHE_TTL", "300"))
+        ttl = float(os.getenv("FOOTNOTE_NEGCACHE_TTL", "300"))
         if ttl <= 0:
             return
         with self._lock:
@@ -210,7 +210,7 @@ class ProxyPool:
         self._sticky: dict[str, str] = {}
 
     def _list(self):
-        return [p.strip() for p in os.getenv("WEBOPERATOR_PROXIES", "").split(",") if p.strip()]
+        return [p.strip() for p in os.getenv("FOOTNOTE_PROXIES", "").split(",") if p.strip()]
 
     def available(self) -> bool:
         return bool(self._list())
@@ -240,7 +240,7 @@ class ProxyPool:
             if ok:
                 self._dead.pop(proxy, None)
             else:
-                self._dead[proxy] = time.monotonic() + float(os.getenv("WEBOPERATOR_PROXY_COOLDOWN", "300"))
+                self._dead[proxy] = time.monotonic() + float(os.getenv("FOOTNOTE_PROXY_COOLDOWN", "300"))
 
     def reset(self):
         with self._lock:
@@ -311,7 +311,7 @@ class BrowserRenderer:
             item[-1].put((None, None, self._error))
 
     def render(self, url, lang="en", proxy=None, timeout=None):
-        timeout = timeout or float(os.getenv("WEBOPERATOR_BROWSER_TIMEOUT", "25"))
+        timeout = timeout or float(os.getenv("FOOTNOTE_BROWSER_TIMEOUT", "25"))
         self._ensure()
         if self._error:
             return None, None, self._error
@@ -326,7 +326,7 @@ class BrowserRenderer:
 # ── External hosted scrape APIs (tier 5) ────────────────────────────────────
 
 def _scrape_external(url, lang="en"):
-    provider = os.getenv("WEBOPERATOR_SCRAPE_API", "").lower()
+    provider = os.getenv("FOOTNOTE_SCRAPE_API", "").lower()
     if provider == "firecrawl":
         key = os.getenv("FIRECRAWL_API_KEY")
         if not key:
@@ -377,7 +377,7 @@ def reset_state():
 def _browser_enabled(override):
     if override is not None:
         return override
-    return _env_bool("WEBOPERATOR_BROWSER_FALLBACK", True)
+    return _env_bool("FOOTNOTE_BROWSER_FALLBACK", True)
 
 
 def _proxy_enabled(override):
@@ -389,7 +389,7 @@ def _proxy_enabled(override):
 def _external_enabled(override):
     if override is not None:
         return override
-    return bool(os.getenv("WEBOPERATOR_SCRAPE_API", "").strip())
+    return bool(os.getenv("FOOTNOTE_SCRAPE_API", "").strip())
 
 
 def _pub_date(html):

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "weboperator-mcp"
+name = "footnote-mcp"
 version = "1.0.0"
 description = "MCP server for source-grounded web research: search, structured-data extraction, evidence verification, and browser automation."
 readme = "README.md"
@@ -28,14 +28,14 @@ dependencies = [
 ]
 
 [project.scripts]
-weboperator-mcp = "weboperator_mcp:cli"
+footnote-mcp = "footnote_mcp:cli"
 
 [tool.setuptools]
 # Flat layout: the runtime is a set of top-level modules. Packaged as py-modules so
 # imports (import core, from search import ...) keep working unchanged. Installed in
 # an isolated env (uvx/pipx) there is no namespace collision.
 py-modules = [
-    "weboperator_mcp",
+    "footnote_mcp",
     "server",
     "tools_search",
     "tools_browser",

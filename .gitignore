@@ -9,9 +9,6 @@ debug_ddg.html
 .env
 .env.*
 
-# Nested standalone project (separate git repo)
-self-evolving-agent/
-
 # Python packaging build artifacts
 *.egg-info/
 build/
