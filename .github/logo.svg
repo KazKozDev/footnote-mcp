@@ -1,0 +1,13 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- dark surface, matching the social preview -->
+  <rect width="512" height="512" fill="#0d1117"/>
+
+  <!-- left circle -->
+  <circle cx="104" cy="256" r="74" fill="#f85149"/>
+
+  <!-- yellow square -->
+  <rect x="196" y="160" width="192" height="192" fill="#e3b341"/>
+
+  <!-- circle overlapping the square's right edge -->
+  <circle cx="398" cy="256" r="82" fill="#f85149"/>
+</svg>

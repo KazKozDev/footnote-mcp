@@ -1,4 +1,6 @@
-# footnote-mcp
+<p align="center">
+  <img src=".github/banner.png" alt="footnote-mcp" width="350">
+</p>
 
 An MCP server for source-grounded web research. It searches the web, fetches and
 extracts pages, pulls structured data out of tables/files/APIs, and — the part that
