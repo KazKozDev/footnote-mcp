@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import sys
+from copy import deepcopy
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -63,6 +64,119 @@ def get_browser() -> WebBrowser:
     if _browser is None:
         _browser = WebBrowser(headed=_headed)
     return _browser
+
+
+ToolSpec = tuple[str, tuple[str, ...], dict[str, object]]
+BrowserToolSpec = tuple[str, tuple[str, ...], dict[str, object]]
+
+
+def _tool_kwargs(arguments: dict, required: tuple[str, ...], defaults: dict[str, object]) -> dict:
+    kwargs = {key: arguments[key] for key in required}
+    for key, default in defaults.items():
+        kwargs[key] = arguments[key] if key in arguments else deepcopy(default)
+    return kwargs
+
+
+SYNC_TOOLS: dict[str, ToolSpec] = {
+    "web_search": ("web_search", ("query",), {"lang": "en", "num": 10, "provider": "auto", "semantic": False}),
+    "web_deep_search": ("web_deep_search", ("query",), {"lang": "en"}),
+    "web_read": ("web_read", ("url",), {"lang": "en", "use_cache": True}),
+    "web_extract_tables": (
+        "web_extract_tables",
+        ("url",),
+        {"lang": "en", "max_tables": 8, "max_rows": 80, "use_cache": True},
+    ),
+    "web_detect_downloads": ("web_detect_downloads", ("url",), {"lang": "en", "max_links": 50}),
+    "web_parse_file": ("web_parse_file", ("url",), {"lang": "en", "max_rows": 200, "use_cache": True}),
+    "web_fetch_json": ("web_fetch_json", ("url",), {"lang": "en", "use_cache": True, "timeout": 20}),
+    "check_date_completeness": (
+        "check_date_completeness",
+        ("start_date", "end_date"),
+        {"actual_items": [], "granularity": "day", "calendar": "calendar", "holidays": []},
+    ),
+    "classify_source": (
+        "classify_source",
+        ("url",),
+        {"status_code": None, "content_type": "", "text_sample": ""},
+    ),
+    "generate_search_queries": ("generate_search_queries", ("task",), {"requirements": {}, "max_queries": 8}),
+    "resolve_units": ("resolve_units", ("text",), {}),
+    "validate_unit_rows": ("validate_unit_rows", ("expected_unit_or_pair",), {"rows": [], "text_fields": None}),
+    "evidence_entailment": (
+        "evidence_entailment",
+        ("claim", "source_excerpt"),
+        {"backend": "auto", "model": None},
+    ),
+    "tool_spec_propose": (
+        "tool_spec_propose",
+        ("task",),
+        {"source_url": "", "observed_failure": "", "desired_output": "rows with date, value, unit, and source_url"},
+    ),
+    "tool_code_generate": ("tool_code_generate", (), {"spec": {}}),
+    "tool_code_validate": ("tool_code_validate", ("code",), {"max_chars": 12000}),
+    "tool_code_run_sandboxed": (
+        "tool_code_run_sandboxed",
+        ("code",),
+        {"source_text": "", "input_payload": {}, "timeout": 5, "max_output_chars": 20000},
+    ),
+    "tool_promote": (
+        "tool_promote",
+        ("name", "code"),
+        {"spec": {}, "sample_source_text": "", "input_payload": {}, "expected_min_rows": 0},
+    ),
+    "source_cache_get": ("source_cache_get", ("url",), {}),
+    "source_cache_put": ("source_cache_put", ("url", "payload"), {}),
+    "build_research_debug_report": (
+        "build_research_debug_report",
+        ("task",),
+        {"requirements": {}, "search_memory": {}, "sources": [], "verification": {}},
+    ),
+    "startup_health_check": ("startup_health_check", (), {}),
+    "web_archive_fetch": (
+        "web_archive_fetch",
+        ("url",),
+        {"timestamp": "", "lang": "en", "fetch_text": True},
+    ),
+    "scholarly_search": ("scholarly_search", ("query",), {"source": "arxiv", "num": 10, "lang": "en"}),
+    "web_search_recent": ("web_search_recent", ("query",), {"freshness": "month", "lang": "en", "num": 10}),
+    "corroborate_claim": ("corroborate_claim", ("claim",), {"excerpts": [], "backend": "heuristic"}),
+    "locate_claim_span": ("locate_claim_span", ("claim", "source_text"), {"max_spans": 3}),
+    "recipe_registry": (
+        "recipe_registry",
+        ("action",),
+        {"recipe_id": "", "source_text": "", "input_payload": {}},
+    ),
+    "web_fetch_authenticated": (
+        "web_fetch_authenticated",
+        ("url",),
+        {"cookies": {}, "headers": {}, "lang": "en", "timeout": 20},
+    ),
+    "web_crawl": ("web_crawl", ("start_url",), {"max_pages": 10, "same_domain": True, "lang": "en"}),
+    "export_dataset": ("export_dataset", ("rows",), {"format": "csv", "path": "", "columns": None}),
+    "reconcile_time_series": ("reconcile_time_series", ("series",), {"on": "date", "value_field": "value"}),
+}
+
+
+BROWSER_TOOLS: dict[str, BrowserToolSpec] = {
+    "web_navigate": ("navigate", ("url",), {}),
+    "web_snapshot": ("snapshot", (), {}),
+    "web_click": ("click", ("ref",), {}),
+    "web_type": ("type", ("ref", "text"), {"submit": False}),
+    "web_extract": ("extract", ("refs",), {}),
+    "web_scroll": ("scroll", ("direction",), {}),
+    "browser_extract_tables": ("extract_tables", (), {"max_tables": 8, "max_rows": 100}),
+    "browser_set_date_range": (
+        "set_date_range",
+        ("start_date", "end_date"),
+        {"submit": True},
+    ),
+    "browser_extract_tables_for_date_range": (
+        "extract_tables_for_date_range",
+        ("start_date", "end_date"),
+        {"max_tables": 8, "max_rows": 100},
+    ),
+    "web_screenshot": ("screenshot", (), {"full_page": False, "ocr": False}),
+}
 
 
 # ── Tool definitions ──
@@ -617,252 +731,14 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
-        if name == "web_search":
-            result = web_search(
-                query=arguments["query"],
-                lang=arguments.get("lang", "en"),
-                num=arguments.get("num", 10),
-                provider=arguments.get("provider", "auto"),
-                semantic=arguments.get("semantic", False),
-            )
-        elif name == "web_deep_search":
-            result = web_deep_search(
-                query=arguments["query"],
-                lang=arguments.get("lang", "en"),
-            )
-        elif name == "web_read":
-            result = web_read(
-                url=arguments["url"],
-                lang=arguments.get("lang", "en"),
-                use_cache=arguments.get("use_cache", True),
-            )
-        elif name == "web_extract_tables":
-            result = web_extract_tables(
-                url=arguments["url"],
-                lang=arguments.get("lang", "en"),
-                max_tables=arguments.get("max_tables", 8),
-                max_rows=arguments.get("max_rows", 80),
-                use_cache=arguments.get("use_cache", True),
-            )
-        elif name == "web_detect_downloads":
-            result = web_detect_downloads(
-                url=arguments["url"],
-                lang=arguments.get("lang", "en"),
-                max_links=arguments.get("max_links", 50),
-            )
-        elif name == "web_parse_file":
-            result = web_parse_file(
-                url=arguments["url"],
-                lang=arguments.get("lang", "en"),
-                max_rows=arguments.get("max_rows", 200),
-                use_cache=arguments.get("use_cache", True),
-            )
-        elif name == "web_fetch_json":
-            result = web_fetch_json(
-                url=arguments["url"],
-                lang=arguments.get("lang", "en"),
-                use_cache=arguments.get("use_cache", True),
-                timeout=arguments.get("timeout", 20),
-            )
-        elif name == "check_date_completeness":
-            result = check_date_completeness(
-                start_date=arguments["start_date"],
-                end_date=arguments["end_date"],
-                actual_items=arguments.get("actual_items", []),
-                granularity=arguments.get("granularity", "day"),
-                calendar=arguments.get("calendar", "calendar"),
-                holidays=arguments.get("holidays", []),
-            )
-        elif name == "classify_source":
-            result = classify_source(
-                url=arguments["url"],
-                status_code=arguments.get("status_code"),
-                content_type=arguments.get("content_type", ""),
-                text_sample=arguments.get("text_sample", ""),
-            )
-        elif name == "generate_search_queries":
-            result = generate_search_queries(
-                task=arguments["task"],
-                requirements=arguments.get("requirements", {}),
-                max_queries=arguments.get("max_queries", 8),
-            )
-        elif name == "resolve_units":
-            result = resolve_units(text=arguments["text"])
-        elif name == "validate_unit_rows":
-            result = validate_unit_rows(
-                rows=arguments.get("rows", []),
-                expected_unit_or_pair=arguments["expected_unit_or_pair"],
-                text_fields=arguments.get("text_fields"),
-            )
-        elif name == "evidence_entailment":
-            result = evidence_entailment(
-                claim=arguments["claim"],
-                source_excerpt=arguments["source_excerpt"],
-                backend=arguments.get("backend", "auto"),
-                model=arguments.get("model"),
-            )
-        elif name == "tool_spec_propose":
-            result = tool_spec_propose(
-                task=arguments["task"],
-                source_url=arguments.get("source_url", ""),
-                observed_failure=arguments.get("observed_failure", ""),
-                desired_output=arguments.get("desired_output", "rows with date, value, unit, and source_url"),
-            )
-        elif name == "tool_code_generate":
-            result = tool_code_generate(spec=arguments.get("spec", {}))
-        elif name == "tool_code_validate":
-            result = tool_code_validate(
-                code=arguments["code"],
-                max_chars=arguments.get("max_chars", 12000),
-            )
-        elif name == "tool_code_run_sandboxed":
-            result = tool_code_run_sandboxed(
-                code=arguments["code"],
-                source_text=arguments.get("source_text", ""),
-                input_payload=arguments.get("input_payload", {}),
-                timeout=arguments.get("timeout", 5),
-                max_output_chars=arguments.get("max_output_chars", 20000),
-            )
-        elif name == "tool_promote":
-            result = tool_promote(
-                name=arguments["name"],
-                spec=arguments.get("spec", {}),
-                code=arguments["code"],
-                sample_source_text=arguments.get("sample_source_text", ""),
-                input_payload=arguments.get("input_payload", {}),
-                expected_min_rows=arguments.get("expected_min_rows", 0),
-            )
-        elif name == "source_cache_get":
-            result = source_cache_get(url=arguments["url"])
-        elif name == "source_cache_put":
-            result = source_cache_put(url=arguments["url"], payload=arguments["payload"])
-        elif name == "build_research_debug_report":
-            result = build_research_debug_report(
-                task=arguments["task"],
-                requirements=arguments.get("requirements", {}),
-                search_memory=arguments.get("search_memory", {}),
-                sources=arguments.get("sources", []),
-                verification=arguments.get("verification", {}),
-            )
-        elif name == "startup_health_check":
-            result = startup_health_check()
-        elif name == "web_navigate":
-            browser = get_browser()
-            result = await browser.navigate(url=arguments["url"])
-        elif name == "web_snapshot":
-            browser = get_browser()
-            result = await browser.snapshot()
-        elif name == "web_click":
-            browser = get_browser()
-            result = await browser.click(ref=arguments["ref"])
-        elif name == "web_type":
-            browser = get_browser()
-            result = await browser.type(
-                ref=arguments["ref"],
-                text=arguments["text"],
-                submit=arguments.get("submit", False),
-            )
-        elif name == "web_extract":
-            browser = get_browser()
-            result = await browser.extract(refs=arguments["refs"])
-        elif name == "web_scroll":
-            browser = get_browser()
-            result = await browser.scroll(direction=arguments["direction"])
-        elif name == "browser_extract_tables":
-            browser = get_browser()
-            result = await browser.extract_tables(
-                max_tables=arguments.get("max_tables", 8),
-                max_rows=arguments.get("max_rows", 100),
-            )
-        elif name == "browser_set_date_range":
-            browser = get_browser()
-            result = await browser.set_date_range(
-                start_date=arguments["start_date"],
-                end_date=arguments["end_date"],
-                submit=arguments.get("submit", True),
-            )
-        elif name == "browser_extract_tables_for_date_range":
-            browser = get_browser()
-            result = await browser.extract_tables_for_date_range(
-                start_date=arguments["start_date"],
-                end_date=arguments["end_date"],
-                max_tables=arguments.get("max_tables", 8),
-                max_rows=arguments.get("max_rows", 100),
-            )
-        elif name == "web_archive_fetch":
-            result = web_archive_fetch(
-                url=arguments["url"],
-                timestamp=arguments.get("timestamp", ""),
-                lang=arguments.get("lang", "en"),
-                fetch_text=arguments.get("fetch_text", True),
-            )
-        elif name == "scholarly_search":
-            result = scholarly_search(
-                query=arguments["query"],
-                source=arguments.get("source", "arxiv"),
-                num=arguments.get("num", 10),
-                lang=arguments.get("lang", "en"),
-            )
-        elif name == "web_search_recent":
-            result = web_search_recent(
-                query=arguments["query"],
-                freshness=arguments.get("freshness", "month"),
-                lang=arguments.get("lang", "en"),
-                num=arguments.get("num", 10),
-            )
-        elif name == "corroborate_claim":
-            result = corroborate_claim(
-                claim=arguments["claim"],
-                excerpts=arguments.get("excerpts", []),
-                backend=arguments.get("backend", "heuristic"),
-            )
-        elif name == "locate_claim_span":
-            result = locate_claim_span(
-                claim=arguments["claim"],
-                source_text=arguments["source_text"],
-                max_spans=arguments.get("max_spans", 3),
-            )
-        elif name == "recipe_registry":
-            result = recipe_registry(
-                action=arguments["action"],
-                recipe_id=arguments.get("recipe_id", ""),
-                source_text=arguments.get("source_text", ""),
-                input_payload=arguments.get("input_payload", {}),
-            )
-        elif name == "web_fetch_authenticated":
-            result = web_fetch_authenticated(
-                url=arguments["url"],
-                cookies=arguments.get("cookies", {}),
-                headers=arguments.get("headers", {}),
-                lang=arguments.get("lang", "en"),
-                timeout=arguments.get("timeout", 20),
-            )
-        elif name == "web_crawl":
-            result = web_crawl(
-                start_url=arguments["start_url"],
-                max_pages=arguments.get("max_pages", 10),
-                same_domain=arguments.get("same_domain", True),
-                lang=arguments.get("lang", "en"),
-            )
-        elif name == "export_dataset":
-            result = export_dataset(
-                rows=arguments["rows"],
-                format=arguments.get("format", "csv"),
-                path=arguments.get("path", ""),
-                columns=arguments.get("columns"),
-            )
-        elif name == "reconcile_time_series":
-            result = reconcile_time_series(
-                series=arguments["series"],
-                on=arguments.get("on", "date"),
-                value_field=arguments.get("value_field", "value"),
-            )
-        elif name == "web_screenshot":
-            browser = get_browser()
-            result = await browser.screenshot(
-                full_page=arguments.get("full_page", False),
-                ocr=arguments.get("ocr", False),
-            )
+        if name in SYNC_TOOLS:
+            func_name, required, defaults = SYNC_TOOLS[name]
+            func = globals()[func_name]
+            result = func(**_tool_kwargs(arguments, required, defaults))
+        elif name in BROWSER_TOOLS:
+            method_name, required, defaults = BROWSER_TOOLS[name]
+            method = getattr(get_browser(), method_name)
+            result = await method(**_tool_kwargs(arguments, required, defaults))
         else:
             result = {"error": f"Unknown tool: {name}"}
 

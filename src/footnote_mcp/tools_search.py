@@ -8,7 +8,8 @@ from .fetch import fetch_page
 from .extract import extract_content
 from .scraper import fetch as scrape_fetch
 from .semantic import semantic_rerank
-from .tools_data import _read_cache, _write_cache, classify_source
+from .tools_data import classify_source
+from .tools_data.cache import _read_cache, _write_cache
 
 
 def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto", semantic: bool = False) -> dict:

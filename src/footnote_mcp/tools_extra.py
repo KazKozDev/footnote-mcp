@@ -25,14 +25,12 @@ from .fetch import _get, fetch_page
 from .search import search_ddg
 from .tools_data import (
     CACHE_DIR,
-    _fetch_bytes,
-    _load_recipe_store,
-    _recipe_rows,
-    _save_recipe_store,
     classify_source,
     evidence_entailment,
     tool_code_run_sandboxed,
 )
+from .tools_data.files import _fetch_bytes
+from .tools_data.sandbox import _load_recipe_store, _recipe_rows, _save_recipe_store
 
 
 def _page_title(html: str) -> str:

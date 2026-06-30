@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Callable
 
 
 def calculate_confidence(
@@ -9,7 +8,7 @@ def calculate_confidence(
     avg_relevance,
     query=None,
     *,
-    has_factual_data: Callable[[str], bool],
+    has_factual_data,
 ):
     """
     Calculate confidence score for a chunk based on relevance, freshness,

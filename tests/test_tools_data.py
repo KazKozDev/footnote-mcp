@@ -308,9 +308,9 @@ def test_entailment_heuristic_auto_and_ollama_fallback(monkeypatch):
 
 
 def test_json_object_extraction_for_llm_responses():
-    parsed = tools_data._extract_json_object('prefix {"status":"supported","reason":"ok"} suffix')
+    parsed = entailment._extract_json_object('prefix {"status":"supported","reason":"ok"} suffix')
     assert parsed == {"status": "supported", "reason": "ok"}
-    assert tools_data._extract_json_object("no json") == {}
+    assert entailment._extract_json_object("no json") == {}
 
 
 def test_debug_report_and_startup_health(monkeypatch, tmp_path):

@@ -49,7 +49,17 @@ IMPERSONATE = [
 ]
 
 __all__ = [
-    "trafilatura",
-    "SentenceTransformer",
-    "CrossEncoder",
+    "HAS_TRAFILATURA",
+    "HAS_EMBEDDINGS",
+    "HAS_CROSS_ENCODER",
+    "NUM_PER_ENGINE",
+    "TOP_N_FETCH",
+    "MAX_CONTENT_CHARS",
+    "CHUNK_SIZE",
+    "CHUNK_OVERLAP",
+    "TOP_CHUNKS_PER_PAGE",
+    "TOTAL_CONTEXT_CHUNKS",
+    "FETCH_WORKERS",
+    "FETCH_TIMEOUT",
+    "IMPERSONATE",
 ]
