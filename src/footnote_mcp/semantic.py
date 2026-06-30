@@ -12,7 +12,7 @@ import os
 
 from curl_cffi import requests as http
 
-from diagnostics import log
+from .diagnostics import log
 
 
 def _ollama_host() -> str:

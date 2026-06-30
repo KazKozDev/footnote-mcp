@@ -27,9 +27,9 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as http
 
-import core
-from diagnostics import log
-from fetch import _get, fetch_page
+from . import core
+from .diagnostics import log
+from .fetch import _get, fetch_page
 
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -394,7 +394,7 @@ def _external_enabled(override):
 
 def _pub_date(html):
     try:
-        from extract import _extract_publish_date
+        from .extract import _extract_publish_date
 
         return _extract_publish_date(html)
     except Exception:

@@ -5,8 +5,8 @@ from datetime import date
 
 import pytest
 
-import tools_data
-import tools_extra
+from footnote_mcp import tools_data
+from footnote_mcp import tools_extra
 
 
 # ── web_archive_fetch ──

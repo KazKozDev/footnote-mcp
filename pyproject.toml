@@ -30,25 +30,19 @@ dependencies = [
 [project.scripts]
 footnote-mcp = "footnote_mcp:cli"
 
-[tool.setuptools]
-# Flat layout: the runtime is a set of top-level modules. Packaged as py-modules so
-# imports (import core, from search import ...) keep working unchanged. Installed in
-# an isolated env (uvx/pipx) there is no namespace collision.
-py-modules = [
-    "footnote_mcp",
-    "server",
-    "tools_search",
-    "tools_browser",
-    "tools_data",
-    "tools_extra",
-    "search",
-    "pipeline",
-    "fetch",
-    "extract",
-    "scraper",
-    "semantic",
-    "rerank",
-    "confidence",
-    "core",
-    "diagnostics",
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "live: requires external network/search engines",
+]
+filterwarnings = [
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+    "ignore:`torch\\.jit\\.interface` is deprecated.*:DeprecationWarning",
 ]

@@ -6,7 +6,7 @@ from collections import Counter
 
 from bs4 import BeautifulSoup
 
-from diagnostics import log
+from .diagnostics import log
 
 
 def _fallback_extract(html):
@@ -61,7 +61,7 @@ def _extract_publish_date(html):
 
 
 def extract_content(html, url=None):
-    import core
+    from . import core
 
     if core.HAS_TRAFILATURA:
         text = core.trafilatura.extract(
@@ -80,7 +80,7 @@ def extract_content(html, url=None):
 
 
 def chunk_text(text, chunk_size=None, overlap=None, lang="en"):
-    import core
+    from . import core
 
     if chunk_size is None:
         chunk_size = core.CHUNK_SIZE

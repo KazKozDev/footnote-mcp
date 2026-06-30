@@ -19,11 +19,11 @@ from urllib.parse import quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-import core
-from extract import extract_content
-from fetch import _get, fetch_page
-from search import search_ddg
-from tools_data import (
+from . import core
+from .extract import extract_content
+from .fetch import _get, fetch_page
+from .search import search_ddg
+from .tools_data import (
     CACHE_DIR,
     _fetch_bytes,
     _load_recipe_store,

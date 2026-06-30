@@ -137,12 +137,16 @@ Use `startup_health_check` to confirm whether OCR, parsers, browser support, and
 MCP server:
 
 ```bash
-python server.py
-python server.py --headed
+pip install -e .        # installs the `footnote-mcp` console script
+footnote-mcp
+footnote-mcp --headed
+
+# …or run from the source tree without installing:
+PYTHONPATH=src python -m footnote_mcp
 ```
 
 The LangGraph research agent that drives this server lives in a separate project,
-[weboperator-agent](../weboperator-agent) (it is an MCP *client* of this server).
+[Scholiast](../scholiast) (it is an MCP *client* of this server).
 
 ## MCP Client Config
 
@@ -196,8 +200,9 @@ as needed (see Search Backends).
   "mcpServers": {
     "footnote": {
       "command": "python",
-      "args": ["server.py"],
-      "cwd": "/path/to/footnote-mcp"
+      "args": ["-m", "footnote_mcp"],
+      "cwd": "/path/to/footnote-mcp",
+      "env": { "PYTHONPATH": "src" }
     }
   }
 }
@@ -255,7 +260,7 @@ python benchmarks/run_benchmark.py --backend ollama   # LLM judge (needs ollama)
 
 ## Fetching & Anti-Bot Ladder
 
-`web_read` fetches pages through an escalation ladder ([scraper.py](scraper.py)): the
+`web_read` fetches pages through an escalation ladder ([scraper.py](src/footnote_mcp/scraper.py)): the
 cheapest method runs first and it escalates only when a result looks blocked or empty.
 A block/quality detector decides when to escalate; a per-domain rate limiter, circuit
 breaker, and negative cache keep things polite. The fetched tier and the full attempt
@@ -299,7 +304,7 @@ Persistent research memory:
 Override cache location:
 
 ```bash
-FOOTNOTE_SOURCE_CACHE=/path/to/cache python server.py
+FOOTNOTE_SOURCE_CACHE=/path/to/cache footnote-mcp
 ```
 
 ## Calendars
@@ -340,3 +345,7 @@ RUN_LIVE_WEB_TESTS=1 python -m pytest -m live
 ```
 
 CI is defined in `.github/workflows/tests.yml`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

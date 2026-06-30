@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-import semantic
+from footnote_mcp import semantic
 
 
 class FakeResp:

@@ -6,11 +6,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from curl_cffi import requests as http
 
-from diagnostics import log
+from .diagnostics import log
 
 
 def _imp():
-    import core
+    from . import core
 
     return random.choice(core.IMPERSONATE)
 
@@ -62,8 +62,8 @@ def _get(url, lang="en", cookies=None, max_retries=2, timeout=15, extra_headers=
 
 def fetch_page(url, lang="en"):
     """Fetch a single page → return (url, raw_html, publish_date, error)."""
-    import core
-    from extract import _extract_publish_date
+    from . import core
+    from .extract import _extract_publish_date
 
     try:
         resp = _get(url, lang, timeout=core.FETCH_TIMEOUT, max_retries=1)
@@ -77,8 +77,8 @@ def fetch_page(url, lang="en"):
 
 def fetch_pages_parallel(urls, query=None, lang="en"):
     """Fetch multiple pages in parallel and return extracted text by URL."""
-    import core
-    from extract import extract_content, is_content_page
+    from . import core
+    from .extract import extract_content, is_content_page
 
     results = {}
 

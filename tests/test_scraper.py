@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-import scraper
+from footnote_mcp import scraper
 
 
 # ── block detector ──

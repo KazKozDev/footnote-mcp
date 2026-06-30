@@ -1,14 +1,14 @@
 """Search tools — wraps the RAG pipeline (search.py, pipeline.py)."""
 
-import core
+from . import core
 from bs4 import BeautifulSoup
-from search import search
-from pipeline import search_extract_rerank, build_llm_context
-from fetch import fetch_page
-from extract import extract_content
-from scraper import fetch as scrape_fetch
-from semantic import semantic_rerank
-from tools_data import _read_cache, _write_cache, classify_source
+from .search import search
+from .pipeline import search_extract_rerank, build_llm_context
+from .fetch import fetch_page
+from .extract import extract_content
+from .scraper import fetch as scrape_fetch
+from .semantic import semantic_rerank
+from .tools_data import _read_cache, _write_cache, classify_source
 
 
 def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto", semantic: bool = False) -> dict:

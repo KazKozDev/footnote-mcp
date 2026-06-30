@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-import server as server_module
+from footnote_mcp import server as server_module
 
 
 def _decode(contents) -> dict:

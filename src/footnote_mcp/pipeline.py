@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from diagnostics import log
+from .diagnostics import log
 
 
 def search_extract_rerank(query, num_fetch=None, lang="en", debug=False):
@@ -13,11 +13,11 @@ def search_extract_rerank(query, num_fetch=None, lang="en", debug=False):
       5. Rerank chunks vs query
       6. Return ranked context chunks with metadata
     """
-    import core
-    from extract import chunk_text, filter_low_quality_chunks
-    from fetch import fetch_pages_parallel
-    from rerank import filter_results_by_relevance, rerank_chunks
-    from search import search
+    from . import core
+    from .extract import chunk_text, filter_low_quality_chunks
+    from .fetch import fetch_pages_parallel
+    from .rerank import filter_results_by_relevance, rerank_chunks
+    from .search import search
 
     if num_fetch is None:
         num_fetch = core.TOP_N_FETCH

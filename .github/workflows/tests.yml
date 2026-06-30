@@ -21,16 +21,7 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Compile
-        run: |
-          python -m py_compile \
-            server.py \
-            weboperator_mcp.py \
-            tools_data.py \
-            tools_search.py \
-            tools_browser.py \
-            tools_extra.py \
-            scraper.py \
-            semantic.py
+        run: python -m compileall src
 
       - name: Test
         run: |

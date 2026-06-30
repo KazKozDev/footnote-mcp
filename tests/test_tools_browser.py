@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 import pytest
 
-from tools_browser import WebBrowser
+from footnote_mcp.tools_browser import WebBrowser
 
 
 def _skip_if_playwright_browser_missing():

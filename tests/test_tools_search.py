@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-import tools_search
+from footnote_mcp import tools_search
 
 
 def test_web_search_formats_results(monkeypatch):

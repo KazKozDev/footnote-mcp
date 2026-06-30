@@ -16,11 +16,16 @@ from mcp.client.stdio import stdio_client
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SERVER_PATH = PROJECT_ROOT / "server.py"
+SRC_PATH = PROJECT_ROOT / "src"
 
 
 async def _with_session(callback):
-    params = StdioServerParameters(command=sys.executable, args=[str(SERVER_PATH)])
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(
+        [str(SRC_PATH), os.environ.get("PYTHONPATH", "")]
+    ).rstrip(os.pathsep)}
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "footnote_mcp"], env=env
+    )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()

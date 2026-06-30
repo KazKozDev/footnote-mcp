@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-import search
+from footnote_mcp import search
 
 
 class FakeResp:

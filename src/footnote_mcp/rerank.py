@@ -4,8 +4,8 @@ import re
 
 from rank_bm25 import BM25Okapi
 
-from confidence import calculate_confidence
-from diagnostics import log
+from .confidence import calculate_confidence
+from .diagnostics import log
 
 _EMBEDDING_MODEL = None
 _CROSS_ENCODER_MODEL = None
@@ -74,7 +74,7 @@ def _tokenize(text):
 
 
 def _get_embedding_model(lang="en"):
-    import core
+    from . import core
 
     global _EMBEDDING_MODEL
     if not core.HAS_EMBEDDINGS:
@@ -95,7 +95,7 @@ def _get_embedding_model(lang="en"):
 
 
 def _get_cross_encoder_model(lang="en"):
-    import core
+    from . import core
 
     global _CROSS_ENCODER_MODEL
     if not core.HAS_CROSS_ENCODER:
@@ -129,7 +129,7 @@ def _semantic_similarity(query, texts, lang="en"):
 
 
 def filter_results_by_relevance(query, results, threshold=0.25, lang="en"):
-    import core
+    from . import core
 
     if not results or not core.HAS_EMBEDDINGS:
         return results
@@ -224,7 +224,7 @@ def _cross_encoder_rerank(query, chunks, top_k, lang="en"):
 
 
 def rerank_chunks(query, chunks_with_meta, top_k=None, lang="en"):
-    import core
+    from . import core
 
     if top_k is None:
         top_k = core.TOTAL_CONTEXT_CHUNKS

@@ -18,10 +18,10 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from tools_data import evidence_entailment  # noqa: E402
-from tools_extra import corroborate_claim, locate_claim_span  # noqa: E402
+from footnote_mcp.tools_data import evidence_entailment  # noqa: E402
+from footnote_mcp.tools_extra import corroborate_claim, locate_claim_span  # noqa: E402
 
 CASES_PATH = Path(__file__).resolve().parent / "entailment_cases.json"
 

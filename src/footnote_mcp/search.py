@@ -8,8 +8,8 @@ from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as http
 
-from diagnostics import log
-from fetch import _get
+from .diagnostics import log
+from .fetch import _get
 
 
 def _bing_unwrap_url(href):
@@ -32,7 +32,7 @@ def _bing_unwrap_url(href):
 
 
 def search_bing(query, num=None, lang="en", debug=False):
-    import core
+    from . import core
 
     if num is None:
         num = core.NUM_PER_ENGINE
@@ -120,7 +120,7 @@ def _ddg_extract_real_url(href):
 
 
 def search_ddg(query, num=None, lang="en", debug=False, df=""):
-    import core
+    from . import core
 
     if num is None:
         num = core.NUM_PER_ENGINE
@@ -335,7 +335,7 @@ def _provider_order(provider):
 
 
 def search(query, num=20, lang="en", debug=False, provider="auto"):
-    import core
+    from . import core
 
     # 1. Keyed API providers first — reliable, no scraping. First non-empty wins.
     for name in _provider_order(provider):

@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 
-from fetch import _get, fetch_page
+from .fetch import _get, fetch_page
 
 
 CACHE_DIR = Path(os.getenv("FOOTNOTE_SOURCE_CACHE", "~/.footnote-mcp/source_cache")).expanduser()

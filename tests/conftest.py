@@ -8,7 +8,7 @@ ladder opt in explicitly (via env or by passing allow_* flags).
 
 import pytest
 
-import scraper
+from footnote_mcp import scraper
 
 
 @pytest.fixture(autouse=True)

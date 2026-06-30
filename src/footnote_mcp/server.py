@@ -16,9 +16,9 @@ from mcp.server.stdio import stdio_server
 from mcp.server.models import InitializationOptions
 from mcp.types import Tool, TextContent, ServerCapabilities
 
-from tools_search import web_search, web_deep_search, web_read
-from tools_browser import WebBrowser
-from tools_extra import (
+from .tools_search import web_search, web_deep_search, web_read
+from .tools_browser import WebBrowser
+from .tools_extra import (
     corroborate_claim,
     export_dataset,
     locate_claim_span,
@@ -30,7 +30,7 @@ from tools_extra import (
     web_fetch_authenticated,
     web_search_recent,
 )
-from tools_data import (
+from .tools_data import (
     check_date_completeness,
     classify_source,
     evidence_entailment,
@@ -892,7 +892,3 @@ async def main():
 def cli():
     """Console-script entry point (sync wrapper around the async server)."""
     asyncio.run(main())
-
-
-if __name__ == "__main__":
-    cli()
