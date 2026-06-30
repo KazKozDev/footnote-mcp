@@ -4,7 +4,7 @@ An MCP server for source-grounded web research. It searches the web, fetches and
 extracts pages, pulls structured data out of tables/files/APIs, and — the part that
 sets it apart — **verifies that a claim is actually supported by its source** instead of
 trusting a snippet. 42 tools over stdio MCP, driven by any MCP client (Claude Desktop,
-Cursor) or by the companion [Scholiast](../scholiast) research agent.
+Cursor) or by the companion [Scholiast](https://github.com/KazKozDev/scholiast) research agent.
 
 The design priority is *trustworthiness over convenience*: search snippets are treated as
 discovery only, every fetched page is cached with provenance, and claims are checked
@@ -216,9 +216,8 @@ uvx --from /path/to/footnote-mcp footnote-mcp   # ad-hoc, no install
 **OCR.** PDF/image OCR uses `pytesseract` + the system `tesseract` binary (`brew install
 tesseract` on macOS). **Local NLI backend** for `evidence_entailment` `backend="local_nli"`:
 `pip install -r requirements-nli.txt` (model via `FOOTNOTE_NLI_MODEL`). Either way,
-`startup_health_check` reports what is actually available.
-
-Pinned runtime versions are in `requirements.lock`.
+`startup_health_check` reports what is actually available. Runtime dependency ranges
+are declared in `pyproject.toml` and mirrored in `requirements.txt`.
 
 ## Tests
 
