@@ -7,6 +7,7 @@ from datetime import date
 import pytest
 
 from footnote_mcp import tools_data
+from footnote_mcp.tools_data import cache, files, sandbox, entailment
 
 
 HTML = """<!doctype html>
@@ -26,7 +27,7 @@ HTML = """<!doctype html>
 
 
 def _patch_cache_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr(tools_data, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
 
 
 def test_web_extract_tables_parses_and_caches(monkeypatch, tmp_path):
@@ -37,7 +38,7 @@ def test_web_extract_tables_parses_and_caches(monkeypatch, tmp_path):
         calls["count"] += 1
         return url, HTML, date(2026, 6, 1), None
 
-    monkeypatch.setattr(tools_data, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(files, "fetch_page", fake_fetch_page)
 
     first = tools_data.web_extract_tables("https://example.com/data", use_cache=True)
     second = tools_data.web_extract_tables("https://example.com/data", use_cache=True)
@@ -53,7 +54,7 @@ def test_web_extract_tables_parses_and_caches(monkeypatch, tmp_path):
 
 def test_web_extract_tables_records_fetch_error(monkeypatch, tmp_path):
     _patch_cache_dir(monkeypatch, tmp_path)
-    monkeypatch.setattr(tools_data, "fetch_page", lambda url, lang="en": (url, None, None, "HTTP 500"))
+    monkeypatch.setattr(files, "fetch_page", lambda url, lang="en": (url, None, None, "HTTP 500"))
 
     result = tools_data.web_extract_tables("https://example.com/bad")
 
@@ -62,7 +63,7 @@ def test_web_extract_tables_records_fetch_error(monkeypatch, tmp_path):
 
 
 def test_web_detect_downloads_finds_files(monkeypatch):
-    monkeypatch.setattr(tools_data, "fetch_page", lambda url, lang="en": (url, HTML, None, None))
+    monkeypatch.setattr(files, "fetch_page", lambda url, lang="en": (url, HTML, None, None))
 
     result = tools_data.web_detect_downloads("https://example.com/page", max_links=10)
 
@@ -96,7 +97,7 @@ def test_web_parse_file_parses_csv_tsv_xlsx_json_and_cache(monkeypatch, tmp_path
         calls["count"] += 1
         return payloads[url]
 
-    monkeypatch.setattr(tools_data, "_fetch_bytes", fake_fetch_bytes)
+    monkeypatch.setattr(files, "_fetch_bytes", fake_fetch_bytes)
 
     csv_result = tools_data.web_parse_file("https://example.com/rates.csv", use_cache=True)
     cached_csv = tools_data.web_parse_file("https://example.com/rates.csv", use_cache=True)
@@ -116,10 +117,10 @@ def test_web_parse_file_parses_csv_tsv_xlsx_json_and_cache(monkeypatch, tmp_path
 
 def test_web_parse_file_reports_download_and_unknown_type(monkeypatch, tmp_path):
     _patch_cache_dir(monkeypatch, tmp_path)
-    monkeypatch.setattr(tools_data, "_fetch_bytes", lambda url, lang="en", timeout=20: (None, "", "boom"))
+    monkeypatch.setattr(files, "_fetch_bytes", lambda url, lang="en", timeout=20: (None, "", "boom"))
     assert tools_data.web_parse_file("https://example.com/missing.csv")["error"] == "boom"
 
-    monkeypatch.setattr(tools_data, "_fetch_bytes", lambda url, lang="en", timeout=20: (b"hello", "text/plain", None))
+    monkeypatch.setattr(files, "_fetch_bytes", lambda url, lang="en", timeout=20: (b"hello", "text/plain", None))
     result = tools_data.web_parse_file("https://example.com/file.bin", use_cache=False)
     assert result["file_type"] == "unknown"
     assert "Unsupported" in result["error"]
@@ -137,7 +138,7 @@ def test_web_fetch_json_parses_errors_and_caches(monkeypatch, tmp_path):
             return None, "application/json", "HTTP 404"
         return json.dumps({"rows": [{"date": "2026-05-01", "rate": 90.1}]}).encode(), "application/json", None
 
-    monkeypatch.setattr(tools_data, "_fetch_bytes", fake_fetch_bytes)
+    monkeypatch.setattr(files, "_fetch_bytes", fake_fetch_bytes)
 
     first = tools_data.web_fetch_json("https://example.com/api", use_cache=True)
     cached = tools_data.web_fetch_json("https://example.com/api", use_cache=True)
@@ -153,7 +154,7 @@ def test_web_fetch_json_parses_errors_and_caches(monkeypatch, tmp_path):
 
 
 def test_recipe_code_validate_run_and_promote(monkeypatch, tmp_path):
-    monkeypatch.setattr(tools_data, "RECIPE_STORE_PATH", tmp_path / "recipes.json")
+    monkeypatch.setattr(sandbox, "RECIPE_STORE_PATH", tmp_path / "recipes.json")
     spec = tools_data.tool_spec_propose(
         "extract daily rates",
         source_url="https://example.com/rates",
@@ -285,7 +286,7 @@ def test_entailment_heuristic_auto_and_ollama_fallback(monkeypatch):
     def fake_ollama(*args, **kwargs):
         raise RuntimeError("ollama down")
 
-    monkeypatch.setattr(tools_data, "_ollama_entailment", fake_ollama)
+    monkeypatch.setattr(entailment, "_ollama_entailment", fake_ollama)
     auto = tools_data.evidence_entailment("bank cut rates", "central bank reduced interest rates", backend="auto")
     forced = tools_data.evidence_entailment("bank cut rates", "central bank reduced interest rates", backend="ollama")
 

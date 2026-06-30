@@ -7,6 +7,7 @@ import pytest
 
 from footnote_mcp import tools_data
 from footnote_mcp import tools_extra
+from footnote_mcp.tools_data import sandbox
 
 
 # ── web_archive_fetch ──
@@ -132,7 +133,7 @@ def test_locate_claim_span_empty_inputs():
 
 @pytest.fixture
 def recipe_store(monkeypatch, tmp_path):
-    monkeypatch.setattr(tools_data, "RECIPE_STORE_PATH", tmp_path / "recipes.json")
+    monkeypatch.setattr(sandbox, "RECIPE_STORE_PATH", tmp_path / "recipes.json")
     code = "def extract(source_text, input_payload):\n    return {'rows': [{'v': 1}]}\n"
     tools_data._save_recipe_store({"recipes": {"r1": {"id": "r1", "name": "demo", "code": code, "created_at": "2026-01-01", "plays": 0, "wins": 0}}})
     return "r1"
