@@ -28,7 +28,6 @@ from bs4 import BeautifulSoup
 from curl_cffi import requests as http
 
 from . import core
-from .diagnostics import log
 from .fetch import _get, fetch_page
 
 _UA = (

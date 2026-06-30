@@ -291,7 +291,7 @@ def test_entailment_heuristic_auto_and_ollama_fallback(monkeypatch):
     forced = tools_data.evidence_entailment("bank cut rates", "central bank reduced interest rates", backend="ollama")
 
     monkeypatch.setattr(
-        tools_data,
+        entailment,
         "_local_nli_entailment",
         lambda **kwargs: {"status": "supported", "score": 0.9, "reason": "nli", "backend": "local_nli", "model": "m"},
     )

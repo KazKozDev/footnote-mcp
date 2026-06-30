@@ -2,21 +2,15 @@
 
 from __future__ import annotations
 
-import csv
 import ast
 import hashlib
-import io
 import json
 import os
 import re
 import subprocess
 import sys
-import time
-import zipfile
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
 
 
 RECIPE_STORE_PATH = Path(os.getenv("FOOTNOTE_RECIPE_STORE", "~/.footnote-mcp/extraction_recipes.json")).expanduser()

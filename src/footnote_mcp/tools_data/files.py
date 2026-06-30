@@ -3,20 +3,10 @@
 from __future__ import annotations
 
 import csv
-import ast
-import hashlib
 import io
 import json
-import os
-import re
-import subprocess
-import sys
-import time
-import zipfile
-from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 
