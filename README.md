@@ -2,6 +2,8 @@
   <img src=".github/banner.png" alt="footnote-mcp" width="350">
 </p>
 
+<!-- mcp-name: io.github.kazkozdev/footnote-mcp -->
+
 An MCP server for source-grounded web research. It searches the web, fetches and
 extracts pages, pulls structured data out of tables/files/APIs, and — the part that
 sets it apart — **verifies that a claim is actually supported by its source** instead of
@@ -39,6 +41,22 @@ into its MCP settings (Claude Desktop: `claude_desktop_config.json`; Cursor: `~/
 No API keys are required to start — search falls back to scraping Bing + DuckDuckGo. Add
 keys later under `"env"` (see [Search backends](#search-backends)). Pass `--headed` to watch
 the browser tier work.
+
+Optional runtime variables are documented in [.env.example](.env.example). Copy it to
+`.env` for local shells, or paste selected variables into your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "footnote": {
+      "command": "footnote-mcp",
+      "env": {
+        "TAVILY_API_KEY": "..."
+      }
+    }
+  }
+}
+```
 
 To run without installing, straight from the source tree:
 
@@ -223,8 +241,22 @@ docker build -t footnote-mcp .
 docker run -i --rm footnote-mcp        # the client launches this; see MCP config below
 ```
 
+Published images are available from GitHub Container Registry:
+
+```bash
+docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:1.1.0
+docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:latest
+```
+
 ```json
-{ "mcpServers": { "footnote": { "command": "docker", "args": ["run", "-i", "--rm", "footnote-mcp"] } } }
+{
+  "mcpServers": {
+    "footnote": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "ghcr.io/kazkozdev/footnote-mcp:latest"]
+    }
+  }
+}
 ```
 
 **pipx / uvx** (isolated install of the entry point):
