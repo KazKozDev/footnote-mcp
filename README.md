@@ -73,7 +73,8 @@ machine.
 
 ## Tool surface (42 tools)
 
-**Discovery and reading**
+<details>
+<summary><b>Discovery and reading</b> (9 tools)</summary>
 
 | Tool | Description |
 |------|-------------|
@@ -87,7 +88,10 @@ machine.
 | `web_crawl` | Breadth-first crawl from a start URL, on-host by default (≤ 50 pages). |
 | `generate_search_queries` | Generate operator queries (`site:`, `filetype:csv`, API/data-table variants). |
 
-**Structured data**
+</details>
+
+<details>
+<summary><b>Structured data</b> (9 tools)</summary>
 
 | Tool | Description |
 |------|-------------|
@@ -101,7 +105,10 @@ machine.
 | `reconcile_time_series` | Align series on a key, compute deltas, flag missing keys/outliers. |
 | `export_dataset` | Write consolidated rows to a `csv`/`xlsx`/`json` file. |
 
-**Source quality and verification**
+</details>
+
+<details>
+<summary><b>Source quality and verification</b> (8 tools)</summary>
 
 | Tool | Description |
 |------|-------------|
@@ -113,7 +120,12 @@ machine.
 | `build_research_debug_report` | Compact report of queries, URLs, source quality, verification gaps. |
 | `startup_health_check` | Check parser, OCR, browser, and cache dependencies. |
 
-**Controlled extraction recipes** — when generic parsers fail, synthesize a sandboxed parser:
+</details>
+
+<details>
+<summary><b>Controlled extraction recipes</b> (6 tools)</summary>
+
+When generic parsers fail, synthesize a sandboxed parser:
 
 | Tool | Description |
 |------|-------------|
@@ -124,13 +136,20 @@ machine.
 | `tool_promote` | Save a validated recipe as reusable memory (no server edit). |
 | `recipe_registry` | Manage promoted recipes: `list` / `get` / `run` / `delete`. |
 
-**Browser fallback** — a controlled Chromium session for JS-heavy or interactive pages:
+</details>
+
+<details>
+<summary><b>Browser fallback</b> (10 tools)</summary>
+
+A controlled Chromium session for JS-heavy or interactive pages:
 
 | Tool | Description |
 |------|-------------|
 | `web_navigate` · `web_snapshot` · `web_click` · `web_type` · `web_extract` · `web_scroll` | Drive a page via stable element refs. |
 | `browser_set_date_range` · `browser_extract_tables` · `browser_extract_tables_for_date_range` | Set a date range, submit, extract visible tables. |
 | `web_screenshot` | Save a PNG and optionally OCR text locked inside the image. |
+
+</details>
 
 ## Search backends
 
