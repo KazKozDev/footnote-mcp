@@ -1,3 +1,4 @@
+# Core runtime dependencies for footnote-mcp
 mcp>=1.0.0
 ollama>=0.4
 playwright>=1.49
