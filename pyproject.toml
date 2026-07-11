@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "footnote-mcp"
+version = "0.1.1"
+description = "MCP server for source-grounded web research: search, structured-data extraction, evidence verification, and browser automation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["mcp", "model-context-protocol", "web-research", "scraping", "fact-checking", "browser-automation"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "ollama>=0.4",
+    "playwright>=1.49",
+    "curl_cffi>=0.5.10",
+    "beautifulsoup4>=4.12",
+    "trafilatura>=1.12",
+    "rank-bm25>=0.2",
+    "openpyxl>=3.1",
+    "pypdf>=4.0",
+    "xlrd>=2.0",
+    "pdfplumber>=0.11",
+    "pytesseract>=0.3",
+    "holidays>=0.60",
+]
+
+[project.scripts]
+footnote-mcp = "footnote_mcp:cli"
+
+[project.urls]
+Homepage = "https://github.com/KazKozDev/footnote-mcp"
+Repository = "https://github.com/KazKozDev/footnote-mcp"
+Issues = "https://github.com/KazKozDev/footnote-mcp/issues"
+Documentation = "https://github.com/KazKozDev/footnote-mcp#readme"
+Changelog = "https://github.com/KazKozDev/footnote-mcp/releases"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "live: requires external network/search engines",
+]
+filterwarnings = [
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+    "ignore:`torch\\.jit\\.interface` is deprecated.*:DeprecationWarning",
+]

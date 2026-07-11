@@ -1,0 +1,10 @@
+<svg width="1000" height="350" viewBox="0 0 1000 350" xmlns="http://www.w3.org/2000/svg">
+  <!-- rounded badge on transparent background -->
+  <rect x="6" y="6" width="988" height="338" rx="44" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+
+  <!-- wordmark -->
+  <text x="500" y="180" text-anchor="middle" font-family="'SF Mono','JetBrains Mono','DejaVu Sans Mono',monospace" font-size="100" font-weight="700" fill="#e6edf3" letter-spacing="-2">footnote<tspan fill="#6e7681">-mcp</tspan></text>
+
+  <!-- small-caps subtitle, bottom-right -->
+  <text x="852" y="262" text-anchor="end" font-family="'SF Mono','JetBrains Mono','DejaVu Sans Mono',monospace" font-size="34" font-weight="600" letter-spacing="14" fill="#8b949e">MCP SERVER</text>
+</svg>

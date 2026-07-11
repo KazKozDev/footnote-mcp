@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kazkozdev/footnote-mcp",
+  "title": "footnote-mcp",
+  "description": "Source-grounded web research with search, extraction, verification, and browser automation.",
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "footnote-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/kazkozdev/footnote-mcp:0.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

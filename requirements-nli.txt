@@ -1,0 +1,3 @@
+# Optional: local NLI entailment model (transformers + torch)
+transformers>=4.45
+torch>=2.0

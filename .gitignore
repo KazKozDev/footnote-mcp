@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+
+debug_bing.html
+debug_ddg.html
+.env
+.env.*
+!.env.example
+
+# Python packaging build artifacts
+*.egg-info/
+build/
+dist/
