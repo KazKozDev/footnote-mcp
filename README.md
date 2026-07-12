@@ -18,7 +18,15 @@ an offline verification heuristic); keys and env vars only make it better.
 
 ## Quick start
 
-From source (Python ≥ 3.10):
+From [PyPI](https://pypi.org/project/footnote-mcp/) (Python ≥ 3.10):
+
+```bash
+pip install footnote-mcp
+python -m playwright install chromium   # the headless browser used by the fetch fallback
+footnote-mcp                            # start the server (speaks MCP over stdio)
+```
+
+Or from source:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
