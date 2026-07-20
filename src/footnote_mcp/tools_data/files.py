@@ -176,7 +176,27 @@ def _parse_xls_bytes(data: bytes, max_rows: int) -> dict:
     return {"tables": tables}
 
 
-def _parse_pdf_bytes(data: bytes, max_rows: int) -> dict:
+# ISO 639-1 codes -> tesseract traineddata names for the languages OCR is asked about.
+_TESSERACT_LANGS = {
+    "en": "eng",
+    "ru": "rus",
+    "uk": "ukr",
+    "es": "spa",
+    "fr": "fra",
+    "de": "deu",
+    "it": "ita",
+    "pt": "por",
+    "zh": "chi_sim",
+    "ja": "jpn",
+}
+
+
+def _tesseract_lang(lang: str) -> str:
+    code = _TESSERACT_LANGS.get((lang or "en").split("-")[0].lower(), "eng")
+    return code if code == "eng" else f"{code}+eng"
+
+
+def _parse_pdf_bytes(data: bytes, max_rows: int, lang: str = "en") -> dict:
     try:
         import pdfplumber
 
@@ -205,7 +225,7 @@ def _parse_pdf_bytes(data: bytes, max_rows: int) -> dict:
                         }
                     )
         if not any(page.get("text") for page in pages):
-            ocr = _ocr_pdf_bytes(data, max_pages=3)
+            ocr = _ocr_pdf_bytes(data, max_pages=8, lang=lang)
             if ocr.get("pages"):
                 pages = ocr["pages"]
         return {"pages": pages, "page_count": len(pages), "tables": tables}
@@ -227,7 +247,7 @@ def _parse_pdf_bytes(data: bytes, max_rows: int) -> dict:
             if line.strip():
                 rows.append({"page": idx, "line_number": line_number, "text": line.strip()})
     if not any(page.get("text") for page in pages):
-        ocr = _ocr_pdf_bytes(data, max_pages=3)
+        ocr = _ocr_pdf_bytes(data, max_pages=8, lang=lang)
         if ocr.get("pages"):
             pages = ocr["pages"]
             rows = []
@@ -250,7 +270,7 @@ def _parse_pdf_bytes(data: bytes, max_rows: int) -> dict:
     }
 
 
-def _ocr_pdf_bytes(data: bytes, max_pages: int = 3) -> dict:
+def _ocr_pdf_bytes(data: bytes, max_pages: int = 8, lang: str = "en") -> dict:
     try:
         import pdfplumber
         import pytesseract
@@ -262,7 +282,7 @@ def _ocr_pdf_bytes(data: bytes, max_pages: int = 3) -> dict:
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             for page_index, page in enumerate(pdf.pages[:max_pages], 1):
                 image = page.to_image(resolution=200).original
-                text = pytesseract.image_to_string(image) or ""
+                text = pytesseract.image_to_string(image, lang=_tesseract_lang(lang)) or ""
                 pages.append({"page": page_index, "text": text[:4000], "extraction": "ocr"})
         return {"ocr_available": True, "pages": pages}
     except Exception as exc:
@@ -289,7 +309,7 @@ def web_parse_file(url: str, lang: str = "en", max_rows: int = 200, use_cache: b
         parsed = _parse_xls_bytes(data, max_rows=max_rows)
         file_type = "xls"
     elif path.endswith(".pdf") or "pdf" in content_type:
-        parsed = _parse_pdf_bytes(data, max_rows=max_rows)
+        parsed = _parse_pdf_bytes(data, max_rows=max_rows, lang=lang)
         file_type = "pdf"
     elif path.endswith(".json") or "json" in content_type:
         parsed = {"json": json.loads(data.decode("utf-8", errors="replace"))}

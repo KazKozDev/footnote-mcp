@@ -3,7 +3,7 @@
   "name": "io.github.KazKozDev/footnote-mcp",
   "description": "MCP server for source-grounded web research: search, structured-data extraction, evidence verification, and browser automation. 42 tools.",
   "title": "footnote-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "repository": {
     "url": "https://github.com/KazKozDev/footnote-mcp",
     "source": "github",
@@ -14,7 +14,7 @@
     {
       "registryType": "pypi",
       "identifier": "footnote-mcp",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "transport": {
         "type": "stdio"
       }
