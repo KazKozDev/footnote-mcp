@@ -5,13 +5,13 @@ from starlette.testclient import TestClient
 os.environ.setdefault("FOOTNOTE_MCP_API_KEY", "test-key")
 os.environ.setdefault("FOOTNOTE_MCP_PUBLIC_URL", "https://footnote.test")
 
-from footnote_mcp.http_server import HostedSettings, create_app
+from footnote_mcp.http_server import APIKey, HostedSettings, create_app
 
 
 def _app():
     return create_app(
         HostedSettings(
-            api_key="test-key",
+            api_keys={"alice": APIKey("test-key", 2), "bob": APIKey("bob-key", 1)},
             public_url="https://footnote.test",
             allowed_host="footnote.test",
             allowed_origin="https://footnote.test",
@@ -31,6 +31,16 @@ def test_mcp_endpoint_requires_bearer_key():
         response = client.post("/mcp", json={})
     assert response.status_code == 401
     assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_each_key_has_its_own_rate_limit():
+    with TestClient(_app(), base_url="https://footnote.test") as client:
+        for _ in range(2):
+            assert client.get("/mcp", headers={"Authorization": "Bearer test-key"}).status_code == 406
+        limited = client.get("/mcp", headers={"Authorization": "Bearer test-key"})
+        bob = client.get("/mcp", headers={"Authorization": "Bearer bob-key"})
+    assert limited.status_code == 429
+    assert bob.status_code == 406
 
 
 def test_mcp_endpoint_completes_initialize_handshake():
