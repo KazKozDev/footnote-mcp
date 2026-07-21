@@ -27,5 +27,6 @@ RUN python -m playwright install --with-deps chromium
 COPY . .
 RUN pip install .
 
-# MCP speaks over stdio; clients launch this with `docker run -i --rm footnote-mcp`.
-ENTRYPOINT ["footnote-mcp"]
+# The default remains stdio for `docker run -i --rm footnote-mcp`. Hosted platforms
+# can override CMD with the Uvicorn command documented in render.yaml.
+CMD ["footnote-mcp"]

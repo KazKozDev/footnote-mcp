@@ -1,0 +1,12 @@
+services:
+  - type: web
+    runtime: docker
+    name: footnote-mcp
+    plan: free
+    healthCheckPath: /healthz
+    dockerCommand: python -m uvicorn footnote_mcp.http_server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FOOTNOTE_MCP_API_KEY
+        generateValue: true
+      - key: FOOTNOTE_MCP_PUBLIC_URL
+        sync: false
