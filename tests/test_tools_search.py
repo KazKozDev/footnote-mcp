@@ -31,8 +31,21 @@ def test_web_search_formats_results(monkeypatch):
 def test_web_deep_search_formats_sources(monkeypatch):
     monkeypatch.setattr(
         tools_search,
+        "discover_sources",
+        lambda query, lang="en", requested=None, provider="auto", num=20: (
+            [{"title": "Title", "url": "https://example.com", "snippet": "s", "score": 1.0, "engines": ["web"]}],
+            ["web"],
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        tools_search,
         "search_extract_rerank",
-        lambda query, lang="en": (["chunk"], [{"url": "https://example.com"}], {"https://example.com"}),
+        lambda query, lang="en", provider="auto", search_results=None: (
+            ["chunk"],
+            [{"url": "https://example.com"}],
+            {"https://example.com"},
+        ),
     )
     monkeypatch.setattr(
         tools_search,
@@ -49,6 +62,18 @@ def test_web_deep_search_formats_sources(monkeypatch):
     assert result["context"] == "context"
     assert result["source_count"] == 1
     assert result["sources"] == [{"num": 7, "title": "Title", "url": "https://example.com", "chunks": 2}]
+    assert result["routed_sources"] == ["web"]
+
+
+def test_select_discovery_sources_routes_by_intent():
+    assert tools_search.select_discovery_sources("Who is the creator of this GitHub repository?") == [
+        "web",
+        "encyclopedia",
+        "github",
+    ]
+    assert tools_search.select_discovery_sources("Find DOI papers about retrieval") == ["web", "papers"]
+    assert tools_search.select_discovery_sources("archive https://example.com old version") == ["web", "archive"]
+    assert tools_search.select_discovery_sources("anything", ["github", "papers"]) == ["github", "papers"]
 
 
 def test_web_read_fetches_extracts_classifies_and_caches(monkeypatch):

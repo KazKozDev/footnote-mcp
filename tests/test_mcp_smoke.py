@@ -126,6 +126,10 @@ def test_mcp_lists_expected_tools():
         assert {
             "web_search",
             "web_deep_search",
+            "papers_search",
+            "encyclopedia_search",
+            "github_search",
+            "archive_search",
             "web_read",
             "web_navigate",
             "web_snapshot",

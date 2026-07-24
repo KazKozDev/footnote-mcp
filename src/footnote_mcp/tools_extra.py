@@ -1,4 +1,4 @@
-"""Extended research tools: archive, scholarly/recent search, corroboration,
+"""Extended research tools: archive/recent search, corroboration,
 span provenance, recipe registry, authenticated fetch, crawl, dataset export,
 and time-series reconciliation.
 
@@ -82,72 +82,7 @@ def web_archive_fetch(url: str, timestamp: str = "", lang: str = "en", fetch_tex
     return result
 
 
-# ── 2. Scholarly / encyclopedic search (arXiv, Wikipedia) ──
-
-def _arxiv_search(query: str, num: int) -> dict:
-    api = f"http://export.arxiv.org/api/query?search_query=all:{quote(query)}&start=0&max_results={max(1, min(num, 50))}"
-    data, _ct, err = _fetch_bytes(api, timeout=20)
-    if err or not data:
-        return {"query": query, "source": "arxiv", "error": err or "no response", "results": []}
-    soup = BeautifulSoup(data.decode("utf-8", errors="replace"), "xml")
-    results = []
-    for entry in soup.find_all("entry"):
-        title_el = entry.find("title")
-        summary_el = entry.find("summary")
-        id_el = entry.find("id")
-        published_el = entry.find("published")
-        authors = [a.get_text(strip=True) for a in entry.find_all("name")]
-        results.append({
-            "title": title_el.get_text(" ", strip=True) if title_el else "",
-            "url": id_el.get_text(strip=True) if id_el else "",
-            "summary": (summary_el.get_text(" ", strip=True) if summary_el else "")[:600],
-            "authors": authors,
-            "published": published_el.get_text(strip=True) if published_el else None,
-        })
-    return {"query": query, "source": "arxiv", "count": len(results), "results": results}
-
-
-def _wikipedia_search(query: str, num: int, lang: str) -> dict:
-    lang = (lang or "en").split("-")[0] or "en"
-    api = (
-        f"https://{lang}.wikipedia.org/w/api.php?action=query&list=search"
-        f"&srsearch={quote(query)}&format=json&srlimit={max(1, min(num, 50))}"
-    )
-    data, _ct, err = _fetch_bytes(api, lang=lang, timeout=20)
-    if err or not data:
-        return {"query": query, "source": "wikipedia", "error": err or "no response", "results": []}
-    try:
-        payload = json.loads(data.decode("utf-8", errors="replace"))
-    except Exception as exc:
-        return {"query": query, "source": "wikipedia", "error": f"bad response: {exc}", "results": []}
-    results = []
-    for item in (payload.get("query", {}).get("search", []) or []):
-        title = item.get("title", "")
-        snippet = BeautifulSoup(item.get("snippet", ""), "html.parser").get_text(" ", strip=True)
-        results.append({
-            "title": title,
-            "url": f"https://{lang}.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}",
-            "snippet": snippet,
-            "size": item.get("size"),
-            "timestamp": item.get("timestamp"),
-        })
-    return {"query": query, "source": "wikipedia", "count": len(results), "results": results}
-
-
-def scholarly_search(query: str, source: str = "arxiv", num: int = 10, lang: str = "en") -> dict:
-    """Search specialized corpora missing from general web search.
-
-    ``source`` is ``arxiv`` (scientific papers) or ``wikipedia`` (encyclopedic).
-    """
-    source = (source or "arxiv").lower()
-    if source == "arxiv":
-        return _arxiv_search(query, num)
-    if source == "wikipedia":
-        return _wikipedia_search(query, num, lang)
-    return {"query": query, "source": source, "error": f"unsupported source: {source}", "results": []}
-
-
-# ── 3. Freshness-filtered search ──
+# ── 2. Freshness-filtered search ──
 
 def web_search_recent(query: str, freshness: str = "month", lang: str = "en", num: int = 10) -> dict:
     """Search with a recency window via DuckDuckGo's date filter.
@@ -166,7 +101,7 @@ def web_search_recent(query: str, freshness: str = "month", lang: str = "en", nu
     }
 
 
-# ── 4. Cross-source corroboration ──
+# ── 3. Cross-source corroboration ──
 
 def corroborate_claim(claim: str, excerpts: list[dict], backend: str = "heuristic") -> dict:
     """Triangulate a claim across multiple source excerpts.

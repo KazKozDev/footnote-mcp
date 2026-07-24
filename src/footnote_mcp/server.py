@@ -18,6 +18,7 @@ from mcp.server.models import InitializationOptions
 from mcp.types import Tool, TextContent, ServerCapabilities
 
 from .tools_search import web_search, web_deep_search, web_read
+from .sources import archive_search, encyclopedia_search, github_search, papers_search
 from .tools_browser import WebBrowser
 from .tools_extra import (
     corroborate_claim,
@@ -25,7 +26,6 @@ from .tools_extra import (
     locate_claim_span,
     recipe_registry,
     reconcile_time_series,
-    scholarly_search,
     web_archive_fetch,
     web_crawl,
     web_fetch_authenticated,
@@ -70,7 +70,11 @@ def _tool_kwargs(arguments: dict, required: tuple[str, ...], defaults: dict[str,
 
 SYNC_TOOLS: dict[str, ToolSpec] = {
     "web_search": ("web_search", ("query",), {"lang": "en", "num": 10, "provider": "auto", "semantic": False}),
-    "web_deep_search": ("web_deep_search", ("query",), {"lang": "en"}),
+    "web_deep_search": (
+        "web_deep_search",
+        ("query",),
+        {"lang": "en", "sources": [], "provider": "auto", "num": 20},
+    ),
     "web_read": ("web_read", ("url",), {"lang": "en", "use_cache": True}),
     "web_extract_tables": (
         "web_extract_tables",
@@ -128,7 +132,18 @@ SYNC_TOOLS: dict[str, ToolSpec] = {
         ("url",),
         {"timestamp": "", "lang": "en", "fetch_text": True},
     ),
-    "scholarly_search": ("scholarly_search", ("query",), {"source": "arxiv", "num": 10, "lang": "en"}),
+    "papers_search": ("papers_search", ("query",), {"source": "auto", "num": 10, "lang": "en"}),
+    "encyclopedia_search": (
+        "encyclopedia_search",
+        ("query",),
+        {"source": "auto", "num": 10, "lang": "en", "sparql": ""},
+    ),
+    "github_search": ("github_search", ("query",), {"kind": "repositories", "num": 10}),
+    "archive_search": (
+        "archive_search",
+        ("url",),
+        {"source": "auto", "num": 10, "timestamp": "", "lang": "en", "fetch_text": False},
+    ),
     "web_search_recent": ("web_search_recent", ("query",), {"freshness": "month", "lang": "en", "num": 10}),
     "corroborate_claim": ("corroborate_claim", ("claim",), {"excerpts": [], "backend": "heuristic"}),
     "locate_claim_span": ("locate_claim_span", ("claim", "source_text"), {"max_spans": 3}),
@@ -177,14 +192,14 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="web_search",
-            description="Search the web. Uses a keyed provider (Tavily/Brave/Google) when an API key is set, otherwise falls back to scraping Bing + DuckDuckGo. Returns titles, URLs, snippets and scores.",
+            description="General web discovery. Uses configured SearXNG first, then keyed providers, then scraped Bing + DuckDuckGo. Returns normalized titles, URLs, snippets and scores.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "lang": {"type": "string", "description": "Language code: en, ru, etc.", "default": "en"},
                     "num": {"type": "integer", "description": "Max results to return", "default": 10},
-                    "provider": {"type": "string", "description": "auto | tavily | brave | google | scrape", "default": "auto"},
+                    "provider": {"type": "string", "description": "auto | searxng | tavily | brave | google | scrape", "default": "auto"},
                     "semantic": {"type": "boolean", "description": "Rerank results by meaning using local bge-m3 embeddings", "default": False},
                 },
                 "required": ["query"],
@@ -192,12 +207,24 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="web_deep_search",
-            description="Deep search: search Bing+DDG → fetch top pages → extract text → rerank chunks → return LLM-ready context. Slower but thorough.",
+            description="Intent-routed deep research: discover through web/papers/encyclopedia/GitHub/archive sources, then fetch, extract, rerank, and return source-grounded context.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "lang": {"type": "string", "description": "Language code", "default": "en"},
+                    "sources": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional explicit source intents: web, papers, encyclopedia, github, archive. Empty enables automatic routing.",
+                        "default": [],
+                    },
+                    "provider": {
+                        "type": "string",
+                        "description": "Web provider: auto | searxng | tavily | brave | google | scrape",
+                        "default": "auto",
+                    },
+                    "num": {"type": "integer", "description": "Maximum discovery results before fetching", "default": 20},
                 },
                 "required": ["query"],
             },
@@ -576,17 +603,65 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="scholarly_search",
-            description="Search specialized corpora missing from general web search: arXiv (scientific papers) or Wikipedia (encyclopedic).",
+            name="papers_search",
+            description="Search scientific publications through Crossref and arXiv. Uses no API key and returns one normalized paper result shape.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "source": {"type": "string", "description": "arxiv | wikipedia", "default": "arxiv"},
+                    "source": {"type": "string", "description": "auto | crossref | arxiv", "default": "auto"},
                     "num": {"type": "integer", "default": 10},
                     "lang": {"type": "string", "default": "en"},
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="encyclopedia_search",
+            description="Search Wikipedia articles and Wikidata entities, or execute a read-only Wikidata SPARQL query.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Entity/topic query; still required when sparql is supplied"},
+                    "source": {"type": "string", "description": "auto | wikipedia | wikidata", "default": "auto"},
+                    "num": {"type": "integer", "default": 10},
+                    "lang": {"type": "string", "default": "en"},
+                    "sparql": {"type": "string", "description": "Optional read-only SPARQL SELECT query", "default": ""},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="github_search",
+            description="Search public GitHub repositories, issues, code, or commits. Authentication is optional; zero-key requests use GitHub's public rate limit.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "kind": {
+                        "type": "string",
+                        "description": "repositories | issues | code | commits",
+                        "default": "repositories",
+                    },
+                    "num": {"type": "integer", "default": 10},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="archive_search",
+            description="Find archived captures of a URL or host through the Wayback Machine and Common Crawl; optionally extract archived text.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Full URL, host, or Common Crawl URL pattern"},
+                    "source": {"type": "string", "description": "auto | wayback | common_crawl", "default": "auto"},
+                    "num": {"type": "integer", "default": 10},
+                    "timestamp": {"type": "string", "description": "Optional Wayback target YYYYMMDD or YYYYMMDDhhmmss", "default": ""},
+                    "lang": {"type": "string", "default": "en"},
+                    "fetch_text": {"type": "boolean", "default": False},
+                },
+                "required": ["url"],
             },
         ),
         Tool(
@@ -749,7 +824,7 @@ async def main():
 
     init_opts = InitializationOptions(
         server_name="footnote",
-        server_version="0.1.1",
+        server_version="0.2.1",
         capabilities=ServerCapabilities(tools={}),
     )
     async with stdio_server() as (read, write):

@@ -7,7 +7,7 @@
 An MCP server for source-grounded web research. It searches the web, fetches and
 extracts pages, pulls structured data out of tables/files/APIs, and — the part that
 sets it apart — **verifies that a claim is actually supported by its source** instead of
-trusting a snippet. 42 tools over stdio MCP, driven by any MCP client (Claude Desktop,
+trusting a snippet. 45 tools over stdio MCP, driven by any MCP client (Claude Desktop,
 Cursor) or by the companion [Scholiast](https://github.com/KazKozDev/scholiast) research agent.
 
 The design priority is *trustworthiness over convenience*: search snippets are treated as
@@ -152,15 +152,18 @@ machine.
 ## Tools
 
 <details>
-<summary><b>Discovery and reading</b> (9 tools)</summary>
+<summary><b>Discovery and reading</b> (12 tools)</summary>
 
 | Tool | Description |
 |------|-------------|
-| `web_search` | Keyed provider (Tavily/Brave/Google) when available, else scraped Bing + DuckDuckGo. Snippets are discovery only. |
+| `web_search` | Configured SearXNG first, then keyed providers, then scraped Bing + DuckDuckGo. Snippets are discovery only. |
 | `web_search_recent` | Search restricted to a recency window (day/week/month/year). |
-| `web_deep_search` | Search, fetch, extract, rerank, and return source context. |
+| `web_deep_search` | Automatically route across web/papers/encyclopedia/GitHub/archive sources, then fetch, extract, rerank, and return source context. |
 | `web_read` | Fetch one URL, extract text, classify source quality, persist cache metadata. |
-| `scholarly_search` | Search arXiv (papers) or Wikipedia (encyclopedic) corpora. |
+| `papers_search` | Search Crossref and arXiv through one normalized, zero-key paper contract. |
+| `encyclopedia_search` | Search Wikipedia/Wikidata entities or run read-only Wikidata SPARQL. |
+| `github_search` | Search public repositories, issues, code, or commits; authentication is optional. |
+| `archive_search` | Find URL captures through Wayback Machine and Common Crawl, optionally extracting archived text. |
 | `web_archive_fetch` | Find the closest Wayback Machine snapshot for a dead/changed URL. |
 | `web_fetch_authenticated` | Fetch a page that needs cookies or custom headers. |
 | `web_crawl` | Breadth-first crawl from a start URL, on-host by default (≤ 50 pages). |
@@ -231,19 +234,37 @@ A controlled Chromium session for JS-heavy or interactive pages:
 
 ## Search backends
 
-`web_search` (and everything built on it) routes through a provider layer. With an API key
-it uses that provider; otherwise it scrapes Bing + DuckDuckGo. Results are normalized to one
-shape regardless of backend.
+`web_search` routes through a provider layer. A configured zero-key SearXNG instance is tried
+first, followed by keyed providers and finally scraped Bing + DuckDuckGo. Results are
+normalized to one shape regardless of backend.
 
 | Provider | Env vars | Notes |
 |----------|----------|-------|
+| SearXNG | `FOOTNOTE_SEARXNG_URL` (or `SEARXNG_URL`) | Zero-key JSON API; instance must enable JSON output. |
 | Tavily | `TAVILY_API_KEY` | LLM-oriented search API. |
 | Brave | `BRAVE_API_KEY` | Independent web index. |
 | Google | `GOOGLE_API_KEY` + `GOOGLE_CSE_ID` | Programmable Search (Custom Search JSON API). |
 | Bing + DuckDuckGo | none | Default fallback; scraped, no key. |
 
-`auto` (default) tries each keyed provider in order Tavily → Brave → Google, then scrapes.
-Force one with the `provider` argument (`tavily`/`brave`/`google`/`scrape`).
+`auto` (default) tries configured providers in order SearXNG → Tavily → Brave → Google,
+then scrapes. Force one with the `provider` argument
+(`searxng`/`tavily`/`brave`/`google`/`scrape`).
+
+### Specialized zero-key discovery
+
+The public MCP surface is organized by user intent rather than by HTTP API:
+
+| Intent tool | Backends | Routing notes |
+|-------------|----------|---------------|
+| `papers_search` | Crossref + arXiv | `source=auto` queries both; force either backend when needed. |
+| `encyclopedia_search` | Wikipedia + Wikidata | Entity search by default; optional read-only SPARQL for structured facts. |
+| `github_search` | GitHub REST search | Public zero-key requests work at GitHub's unauthenticated rate limit; `GITHUB_TOKEN` is optional. |
+| `archive_search` | Wayback + Common Crawl | Accepts a URL/host pattern. `fetch_text=true` attempts archived-content extraction. |
+
+All four return `title`, `url`, `snippet`, `published`, `authors`, `source`, and
+`source_type` where those fields apply. `web_deep_search` accepts an optional `sources`
+array (`web`, `papers`, `encyclopedia`, `github`, `archive`). With an empty array it always
+uses general web discovery and adds specialized sources when the query signals their intent.
 
 **Semantic reranking.** Pass `semantic: true` to `web_search` to reorder by meaning rather
 than keyword overlap: it over-fetches, embeds query and results with a local ollama model,
@@ -304,7 +325,7 @@ docker run -i --rm footnote-mcp        # the client launches this; see MCP confi
 Published images are available from GitHub Container Registry:
 
 ```bash
-docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.1.1
+docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.1
 docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:latest
 ```
 

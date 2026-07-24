@@ -18,6 +18,10 @@ def test_list_tools_exposes_unique_names():
         assert len(names) == len(set(names))
         assert {
             "web_search",
+            "papers_search",
+            "encyclopedia_search",
+            "github_search",
+            "archive_search",
             "web_read",
             "web_extract_tables",
             "web_parse_file",
@@ -48,6 +52,10 @@ def test_call_tool_dispatches_non_browser_tools(monkeypatch):
     for name in [
         "web_search",
         "web_deep_search",
+        "papers_search",
+        "encyclopedia_search",
+        "github_search",
+        "archive_search",
         "web_read",
         "web_extract_tables",
         "web_detect_downloads",
@@ -73,7 +81,11 @@ def test_call_tool_dispatches_non_browser_tools(monkeypatch):
 
     cases = [
         ("web_search", {"query": "q", "lang": "en", "num": 3}, "web_search"),
-        ("web_deep_search", {"query": "q", "lang": "en"}, "web_deep_search"),
+        ("web_deep_search", {"query": "q", "lang": "en", "sources": ["github"]}, "web_deep_search"),
+        ("papers_search", {"query": "q", "source": "crossref"}, "papers_search"),
+        ("encyclopedia_search", {"query": "q", "source": "wikidata"}, "encyclopedia_search"),
+        ("github_search", {"query": "q", "kind": "repositories"}, "github_search"),
+        ("archive_search", {"url": "https://example.com", "source": "common_crawl"}, "archive_search"),
         ("web_read", {"url": "https://example.com", "use_cache": False}, "web_read"),
         ("web_extract_tables", {"url": "https://example.com", "max_tables": 2}, "web_extract_tables"),
         ("web_detect_downloads", {"url": "https://example.com", "max_links": 2}, "web_detect_downloads"),

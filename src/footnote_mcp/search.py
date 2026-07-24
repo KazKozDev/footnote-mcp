@@ -309,38 +309,81 @@ def search_google(query, num=10, lang="en"):
     return _normalize_api(items, "google")
 
 
+def _searxng_url() -> str:
+    return (os.getenv("FOOTNOTE_SEARXNG_URL") or os.getenv("SEARXNG_URL") or "").strip().rstrip("/")
+
+
+def search_searxng(query, num=10, lang="en"):
+    """Search a configured SearXNG instance through its zero-key JSON API."""
+    base_url = _searxng_url()
+    if not base_url:
+        return []
+    resp = http.get(
+        f"{base_url}/search",
+        params={
+            "q": query,
+            "format": "json",
+            "language": lang,
+            "categories": "general",
+            "safesearch": 0,
+        },
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"searxng HTTP {resp.status_code}")
+    try:
+        results = resp.json().get("results", []) or []
+    except Exception as exc:
+        raise RuntimeError(f"searxng invalid JSON response: {exc}") from exc
+    items = [
+        {
+            "title": result.get("title", ""),
+            "url": result.get("url", ""),
+            "snippet": result.get("content", ""),
+        }
+        for result in results[: max(1, min(num, 50))]
+    ]
+    return _normalize_api(items, "searxng")
+
+
 # Map provider name → function name; resolved via globals() at call time so the
 # function is looked up live (testable, and survives reassignment).
-_API_PROVIDERS = {"tavily": "search_tavily", "brave": "search_brave", "google": "search_google"}
+_DIRECT_PROVIDERS = {
+    "searxng": "search_searxng",
+    "tavily": "search_tavily",
+    "brave": "search_brave",
+    "google": "search_google",
+}
 
 
 def _provider_order(provider):
     """Decide which keyed providers to try, in priority order.
 
-    auto: every provider that has its key set (tavily → brave → google).
+    auto: configured SearXNG, then every provider that has its key set.
     A specific name forces just that provider. 'scrape' skips APIs entirely.
     Scraping Bing+DDG is always the final fallback regardless.
     """
     provider = (provider or "auto").lower()
     keyed = {
+        "searxng": bool(_searxng_url()),
         "tavily": bool(os.getenv("TAVILY_API_KEY")),
         "brave": bool(os.getenv("BRAVE_API_KEY")),
         "google": bool(os.getenv("GOOGLE_API_KEY") and os.getenv("GOOGLE_CSE_ID")),
     }
-    if provider in _API_PROVIDERS:
+    if provider in _DIRECT_PROVIDERS:
         return [provider]
     if provider == "scrape":
         return []
-    return [name for name in ("tavily", "brave", "google") if keyed[name]]
+    return [name for name in ("searxng", "tavily", "brave", "google") if keyed[name]]
 
 
 def search(query, num=20, lang="en", debug=False, provider="auto"):
     from . import core
 
-    # 1. Keyed API providers first — reliable, no scraping. First non-empty wins.
+    # 1. Configured JSON/API providers first. First non-empty response wins.
     for name in _provider_order(provider):
         try:
-            results = globals()[_API_PROVIDERS[name]](query, num=num, lang=lang)
+            results = globals()[_DIRECT_PROVIDERS[name]](query, num=num, lang=lang)
             if results:
                 log.info("[SEARCH] provider=%s -> %s results", name, len(results))
                 return results[:num]

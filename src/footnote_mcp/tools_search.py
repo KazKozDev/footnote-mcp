@@ -1,5 +1,8 @@
 """Search tools — wraps the RAG pipeline (search.py, pipeline.py)."""
 
+import re
+from urllib.parse import urlparse
+
 from . import core
 from bs4 import BeautifulSoup
 from .search import search
@@ -8,14 +11,15 @@ from .fetch import fetch_page
 from .extract import extract_content
 from .scraper import fetch as scrape_fetch
 from .semantic import semantic_rerank
+from . import sources as specialized_sources
 from .tools_data.classify import classify_source
 from .tools_data.cache import _read_cache, _write_cache
 
 
 def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto", semantic: bool = False) -> dict:
-    """Search via a keyed provider (Tavily/Brave/Google) when available, else Bing + DDG.
+    """Search via configured SearXNG/keyed providers, else scraped Bing + DDG.
 
-    ``provider``: auto | tavily | brave | google | scrape. Results are merged into a
+    ``provider``: auto | searxng | tavily | brave | google | scrape. Results are merged into a
     single shape regardless of backend.
     ``semantic``: rerank results by meaning using local bge-m3 embeddings (best-effort;
     over-fetches candidates, reorders by query similarity, then trims to ``num``).
@@ -49,9 +53,154 @@ def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "aut
     }
 
 
-def web_deep_search(query: str, lang: str = "en") -> dict:
-    """Full pipeline: search → fetch → extract → rerank → LLM context."""
-    ranked_chunks, search_results, fetched_urls = search_extract_rerank(query, lang=lang)
+_PAPER_HINTS = {
+    "arxiv", "crossref", "doi", "journal", "paper", "papers", "publication", "research study",
+    "scientific", "исследование", "статья", "публикация", "научн",
+}
+_ENCYCLOPEDIA_HINTS = {
+    "who is", "what is", "history of", "biography", "capital of", "wikidata", "wikipedia",
+    "кто такой", "кто такая", "что такое", "история", "биография", "столица",
+}
+_GITHUB_HINTS = {
+    "github", "repository", "repo", "source code", "release", "pull request", "issue",
+    "репозитор", "исходный код", "релиз",
+}
+_ARCHIVE_HINTS = {
+    "archive", "archived", "wayback", "common crawl", "old version", "dead link",
+    "архив", "старая версия", "недоступная ссылка",
+}
+
+
+def _contains_hint(query: str, hints: set[str]) -> bool:
+    lowered = query.lower()
+    return any(hint in lowered for hint in hints)
+
+
+def _query_url(query: str) -> str:
+    match = re.search(r"https?://[^\s<>\"]+", query)
+    if match:
+        return match.group(0).rstrip(".,;:!?)")
+    stripped = query.strip()
+    if " " not in stripped and urlparse(f"https://{stripped}").hostname and "." in stripped:
+        return stripped
+    return ""
+
+
+def select_discovery_sources(query: str, requested: list[str] | None = None) -> list[str]:
+    """Choose intent-level sources; an explicit list always wins."""
+    allowed = {"web", "papers", "encyclopedia", "github", "archive"}
+    if requested:
+        selected = []
+        for source in requested:
+            normalized = str(source).lower()
+            if normalized in allowed and normalized not in selected:
+                selected.append(normalized)
+        return selected or ["web"]
+
+    selected = ["web"]
+    if _contains_hint(query, _PAPER_HINTS):
+        selected.append("papers")
+    if _contains_hint(query, _ENCYCLOPEDIA_HINTS):
+        selected.append("encyclopedia")
+    if _contains_hint(query, _GITHUB_HINTS):
+        selected.append("github")
+    if _query_url(query) and _contains_hint(query, _ARCHIVE_HINTS):
+        selected.append("archive")
+    return selected
+
+
+def _discovery_shape(result: dict, source_name: str, rank: int) -> dict | None:
+    url = result.get("url") or ""
+    title = result.get("title") or url
+    if not url or not title:
+        return None
+    return {
+        "title": title,
+        "url": url,
+        "snippet": result.get("snippet") or result.get("summary") or "",
+        "score": round(1.0 / max(rank, 1), 3),
+        "engines": [result.get("source") or source_name],
+    }
+
+
+def discover_sources(
+    query: str,
+    *,
+    lang: str = "en",
+    requested: list[str] | None = None,
+    provider: str = "auto",
+    num: int = 20,
+) -> tuple[list[dict], list[str], dict[str, str]]:
+    """Run routed discovery and normalize every backend for the fetch pipeline."""
+    routed = select_discovery_sources(query, requested)
+    per_source = max(3, min(num, 10))
+    responses: dict[str, dict] = {}
+    for source_name in routed:
+        if source_name == "web":
+            responses[source_name] = web_search(query, lang=lang, num=per_source, provider=provider)
+        elif source_name == "papers":
+            responses[source_name] = specialized_sources.papers_search(query, num=per_source, lang=lang)
+        elif source_name == "encyclopedia":
+            responses[source_name] = specialized_sources.encyclopedia_search(query, num=per_source, lang=lang)
+        elif source_name == "github":
+            responses[source_name] = specialized_sources.github_search(query, num=per_source)
+        elif source_name == "archive":
+            responses[source_name] = specialized_sources.archive_search(
+                _query_url(query) or query,
+                num=per_source,
+                lang=lang,
+            )
+
+    merged = []
+    seen = set()
+    errors = {}
+    for source_name in routed:
+        response = responses[source_name]
+        if response.get("error"):
+            errors[source_name] = response["error"]
+    max_results = max((len(response.get("results") or []) for response in responses.values()), default=0)
+    for index in range(max_results):
+        for source_name in routed:
+            response = responses[source_name]
+            items = response.get("results") or []
+            if index >= len(items):
+                continue
+            item = items[index]
+            rank = index + 1
+            normalized = _discovery_shape(item, source_name, rank)
+            if not normalized:
+                continue
+            identity = normalized["url"].split("#", 1)[0].rstrip("/").lower()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            merged.append(normalized)
+            if len(merged) >= num:
+                return merged, routed, errors
+    return merged, routed, errors
+
+
+def web_deep_search(
+    query: str,
+    lang: str = "en",
+    sources: list[str] | None = None,
+    provider: str = "auto",
+    num: int = 20,
+) -> dict:
+    """Route discovery by intent, then fetch, extract, rerank, and build context."""
+    discovery, routed_sources, discovery_errors = discover_sources(
+        query,
+        lang=lang,
+        requested=sources,
+        provider=provider,
+        num=num,
+    )
+    ranked_chunks, search_results, fetched_urls = search_extract_rerank(
+        query,
+        lang=lang,
+        provider=provider,
+        search_results=discovery,
+    )
     context, source_map, by_source = build_llm_context(ranked_chunks, search_results, fetched_urls=fetched_urls)
 
     # Build compact result
@@ -71,6 +220,9 @@ def web_deep_search(query: str, lang: str = "en") -> dict:
         "sources": sources,
         "context_length": len(context),
         "source_count": len(by_source),
+        "routed_sources": routed_sources,
+        "discovery_count": len(discovery),
+        "discovery_errors": discovery_errors,
     }
 
 

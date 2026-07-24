@@ -3,7 +3,7 @@ from __future__ import annotations
 from .diagnostics import log
 
 
-def search_extract_rerank(query, num_fetch=None, lang="en", debug=False):
+def search_extract_rerank(query, num_fetch=None, lang="en", debug=False, provider="auto", search_results=None):
     """
     Full pipeline:
       1. Search Bing+DDG → merge
@@ -24,7 +24,9 @@ def search_extract_rerank(query, num_fetch=None, lang="en", debug=False):
 
     log.info("QUERY: %s", query)
 
-    all_results = search(query, num=20, lang=lang, debug=debug)
+    all_results = search_results
+    if all_results is None:
+        all_results = search(query, num=20, lang=lang, debug=debug, provider=provider)
     if not all_results:
         return [], [], set()
 

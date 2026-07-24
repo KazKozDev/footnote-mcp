@@ -16,7 +16,14 @@ class FakeResp:
 
 @pytest.fixture(autouse=True)
 def clear_keys(monkeypatch):
-    for var in ("TAVILY_API_KEY", "BRAVE_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CSE_ID"):
+    for var in (
+        "FOOTNOTE_SEARXNG_URL",
+        "SEARXNG_URL",
+        "TAVILY_API_KEY",
+        "BRAVE_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_CSE_ID",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -24,10 +31,12 @@ def clear_keys(monkeypatch):
 
 def test_provider_order_auto_uses_only_keyed(monkeypatch):
     assert search._provider_order("auto") == []
+    monkeypatch.setenv("FOOTNOTE_SEARXNG_URL", "http://localhost:8080")
+    assert search._provider_order("auto") == ["searxng"]
     monkeypatch.setenv("BRAVE_API_KEY", "k")
-    assert search._provider_order("auto") == ["brave"]
+    assert search._provider_order("auto") == ["searxng", "brave"]
     monkeypatch.setenv("TAVILY_API_KEY", "k")
-    assert search._provider_order("auto") == ["tavily", "brave"]
+    assert search._provider_order("auto") == ["searxng", "tavily", "brave"]
 
 
 def test_provider_order_explicit_and_scrape():
@@ -75,7 +84,20 @@ def test_search_google_parses(monkeypatch):
     assert out[0]["engines"] == ["google"]
 
 
+def test_search_searxng_parses_zero_key_json(monkeypatch):
+    monkeypatch.setenv("SEARXNG_URL", "http://searx.test/")
+    payload = {"results": [{"title": "A", "url": "https://a.com", "content": "result text"}]}
+    monkeypatch.setattr(search.http, "get", lambda *a, **k: FakeResp(200, payload))
+
+    out = search.search_searxng("q")
+
+    assert out[0]["url"] == "https://a.com"
+    assert out[0]["snippet"] == "result text"
+    assert out[0]["engines"] == ["searxng"]
+
+
 def test_provider_without_key_returns_empty():
+    assert search.search_searxng("q") == []
     assert search.search_tavily("q") == []
     assert search.search_brave("q") == []
     assert search.search_google("q") == []

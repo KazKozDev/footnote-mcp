@@ -34,46 +34,6 @@ def test_web_archive_fetch_handles_no_snapshot(monkeypatch):
     assert "error" in result
 
 
-# ── scholarly_search ──
-
-def test_scholarly_search_arxiv_parses_atom(monkeypatch):
-    atom = """<?xml version='1.0'?>
-    <feed xmlns='http://www.w3.org/2005/Atom'>
-      <entry>
-        <id>http://arxiv.org/abs/2401.00001</id>
-        <title>Deep Nets</title>
-        <summary>A paper about deep nets.</summary>
-        <published>2024-01-01T00:00:00Z</published>
-        <author><name>Ada Lovelace</name></author>
-      </entry>
-    </feed>"""
-    monkeypatch.setattr(tools_extra, "_fetch_bytes", lambda *a, **k: (atom.encode(), "application/atom+xml", None))
-
-    result = tools_extra.scholarly_search("deep nets", source="arxiv", num=5)
-
-    assert result["source"] == "arxiv"
-    assert result["count"] == 1
-    assert result["results"][0]["title"] == "Deep Nets"
-    assert result["results"][0]["authors"] == ["Ada Lovelace"]
-
-
-def test_scholarly_search_wikipedia_parses_json(monkeypatch):
-    payload = {"query": {"search": [{"title": "Photosynthesis", "snippet": "<span>green</span> plants", "size": 123, "timestamp": "2026-01-01"}]}}
-    monkeypatch.setattr(tools_extra, "_fetch_bytes", lambda *a, **k: (json.dumps(payload).encode(), "application/json", None))
-
-    result = tools_extra.scholarly_search("photosynthesis", source="wikipedia")
-
-    assert result["count"] == 1
-    assert result["results"][0]["title"] == "Photosynthesis"
-    assert result["results"][0]["url"].endswith("/wiki/Photosynthesis")
-    assert result["results"][0]["snippet"] == "green plants"
-
-
-def test_scholarly_search_rejects_unknown_source():
-    result = tools_extra.scholarly_search("x", source="pubmed")
-    assert "error" in result and result["results"] == []
-
-
 # ── web_search_recent ──
 
 def test_web_search_recent_maps_freshness_and_passes_df(monkeypatch):
