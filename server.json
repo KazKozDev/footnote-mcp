@@ -3,7 +3,7 @@
   "name": "io.github.KazKozDev/footnote-mcp",
   "description": "Source-grounded web research: search, extraction, verification, and browser automation.",
   "title": "footnote-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "repository": {
     "url": "https://github.com/KazKozDev/footnote-mcp",
     "source": "github",
@@ -14,14 +14,14 @@
     {
       "registryType": "pypi",
       "identifier": "footnote-mcp",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/kazkozdev/footnote-mcp:0.2.2",
+      "identifier": "ghcr.io/kazkozdev/footnote-mcp:0.2.3",
       "transport": {
         "type": "stdio"
       }

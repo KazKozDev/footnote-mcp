@@ -2,7 +2,7 @@
   <img src=".github/banner.png" alt="footnote-mcp" width="350">
 </p>
 
-<!-- mcp-name: io.github.kazkozdev/footnote-mcp -->
+<!-- mcp-name: io.github.KazKozDev/footnote-mcp -->
 
 An MCP server for source-grounded web research. It searches the web, fetches and
 extracts pages, pulls structured data out of tables/files/APIs, and — the part that
@@ -325,7 +325,7 @@ docker run -i --rm footnote-mcp        # the client launches this; see MCP confi
 Published images are available from GitHub Container Registry:
 
 ```bash
-docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.2
+docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.3
 docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:latest
 ```
 
