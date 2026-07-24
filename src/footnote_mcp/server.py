@@ -824,7 +824,7 @@ async def main():
 
     init_opts = InitializationOptions(
         server_name="footnote",
-        server_version="0.2.1",
+        server_version="0.2.2",
         capabilities=ServerCapabilities(tools={}),
     )
     async with stdio_server() as (read, write):

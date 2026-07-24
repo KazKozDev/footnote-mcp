@@ -1,0 +1,47 @@
+name: publish-mcp-registry
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to official MCP Registry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Wait for release artifacts
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          for _ in $(seq 1 60); do
+            if curl --fail --silent "https://pypi.org/pypi/footnote-mcp/${VERSION}/json" >/dev/null \
+              && docker manifest inspect "ghcr.io/kazkozdev/footnote-mcp:${VERSION}" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for PyPI and GHCR artifacts for ${VERSION}" >&2
+          exit 1
+
+      - name: Install MCP publisher
+        run: |
+          curl --fail --location --retry 3 \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Authenticate with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server metadata
+        run: ./mcp-publisher publish
