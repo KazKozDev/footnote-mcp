@@ -331,7 +331,7 @@ docker run -i --rm footnote-mcp        # the client launches this; see MCP confi
 Published images are available from GitHub Container Registry:
 
 ```bash
-docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.4
+docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.5
 docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:latest
 ```
 
