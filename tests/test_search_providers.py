@@ -41,6 +41,8 @@ def test_provider_order_auto_uses_only_keyed(monkeypatch):
 
 def test_provider_order_explicit_and_scrape():
     assert search._provider_order("google") == ["google"]
+    assert search._provider_order("wiby") == ["wiby"]
+    assert search._provider_order("marginalia") == ["marginalia"]
     assert search._provider_order("scrape") == []
 
 
@@ -110,17 +112,256 @@ def test_provider_http_error_raises(monkeypatch):
         search.search_brave("q")
 
 
+# ── brave HTML scraping (no key) ──
+
+class FakeHtmlResp:
+    def __init__(self, text, status_code=200):
+        self.text = text
+        self.status_code = status_code
+
+
+class FakeJsonResp:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def json(self):
+        return self._payload
+
+
+BRAVE_HTML = """
+<div id="results">
+  <div class="snippet" data-type="web">
+    <a href="https://example.com/a"><div class="title">Title A</div></a>
+    <div class="snippet-description">Desc A</div>
+  </div>
+  <div class="snippet" data-type="web">
+    <a href="https://example.org/b"><div class="title">Title B</div></a>
+    <div class="snippet-description">Desc B</div>
+  </div>
+  <div class="snippet" data-type="web">
+    <a href="https://example.com/a"><div class="title">Dup</div></a>
+  </div>
+</div>
+"""
+
+
+BING_HTML = """
+<ol id="b_results">
+  <li class="b_algo">
+    <h2><a href="https://modelcontextprotocol.io/">Model Context Protocol</a></h2>
+    <div class="b_caption"><p>Official MCP documentation and architecture.</p></div>
+  </li>
+  <li class="b_algo">
+    <h2><a href="https://github.com/modelcontextprotocol">MCP repositories on GitHub</a></h2>
+    <div class="b_caption"><p>Open source Model Context Protocol projects.</p></div>
+  </li>
+</ol>
+"""
+
+
+BING_POISONED_HTML = """
+<ol id="b_results">
+  <li class="b_algo">
+    <h2><a href="https://example.com/real-estate">Property for sale</a></h2>
+    <div class="b_caption"><p>Find houses and apartments.</p></div>
+  </li>
+  <li class="b_algo">
+    <h2><a href="https://example.org/college">College application</a></h2>
+    <div class="b_caption"><p>Courses and admissions.</p></div>
+  </li>
+</ol>
+"""
+
+
+def test_search_bing_accepts_relevant_results_and_uses_valid_country(monkeypatch):
+    requested = {}
+
+    def fake_get(url, *args, **kwargs):
+        requested["url"] = url
+        return FakeHtmlResp(BING_HTML)
+
+    monkeypatch.setattr(search, "_get", fake_get)
+    out = search.search_bing("Model Context Protocol GitHub", num=10, lang="en")
+
+    assert len(out) == 2
+    assert "cc=US" in requested["url"]
+    assert "cc=en" not in requested["url"]
+
+
+def test_search_bing_rejects_unrelated_http_200_results(monkeypatch):
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp(BING_POISONED_HTML))
+    assert search.search_bing("Model Context Protocol GitHub") == []
+
+
+def test_search_bing_accepts_distinctive_query_term(monkeypatch):
+    html = """
+    <li class="b_algo">
+      <h2><a href="https://developers.openai.com/">OpenAI Developers</a></h2>
+      <div class="b_caption"><p>Docs and resources for developers.</p></div>
+    </li>
+    """
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp(html))
+    out = search.search_bing("OpenAI official documentation")
+    assert [item["url"] for item in out] == ["https://developers.openai.com/"]
+
+
+def test_search_bing_rejects_antibot_challenge(monkeypatch):
+    challenge = "<html><body>One last step: solve the CAPTCHA challenge</body></html>"
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp(challenge))
+    assert search.search_bing("python programming language") == []
+
+
+def test_search_brave_scrape_parses(monkeypatch):
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp(BRAVE_HTML))
+    out = search.search_brave_scrape("q", num=10)
+    assert [r["url"] for r in out] == ["https://example.com/a", "https://example.org/b"]
+    assert out[0]["title"] == "Title A"
+    assert out[0]["snippet"] == "Desc A"
+
+
+def test_search_brave_scrape_handles_http_error(monkeypatch):
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp("", 429))
+    assert search.search_brave_scrape("q") == []
+
+
+def test_search_brave_scrape_respects_num(monkeypatch):
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp(BRAVE_HTML))
+    assert len(search.search_brave_scrape("q", num=1)) == 1
+
+
+def test_search_wiby_parses_public_json_and_preserves_attribution(monkeypatch):
+    payload = [
+        {"URL": "https://example.com/a", "Title": "Title A", "Snippet": "Snippet A", "Description": "Desc A"},
+        {"URL": "https://example.org/b", "Title": "Title B", "Description": "Desc B"},
+    ]
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeJsonResp(payload))
+
+    out = search.search_wiby("q", num=1)
+
+    assert out == [{
+        "title": "Title A",
+        "url": "https://example.com/a",
+        "snippet": "Snippet A",
+        "attribution": "https://wiby.me/",
+    }]
+
+
+def test_search_wiby_rejects_broad_but_unrelated_results(monkeypatch):
+    payload = [{
+        "URL": "https://example.com/geocoding",
+        "Title": "Geocoding API Documentation",
+        "Snippet": "Parameters and programming tutorials",
+    }]
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeJsonResp(payload))
+    assert search.search_wiby("Model Context Protocol official documentation") == []
+
+
+def test_search_wiby_drops_generic_rows_beside_relevant_rows(monkeypatch):
+    payload = [
+        {"URL": "https://example.com/geocoding", "Title": "API Documentation", "Snippet": "Reference"},
+        {"URL": "https://example.org/mcp", "Title": "Model Context Protocol", "Snippet": "Official docs"},
+    ]
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeJsonResp(payload))
+    out = search.search_wiby("Model Context Protocol official documentation")
+    assert [item["url"] for item in out] == ["https://example.org/mcp"]
+
+
+def test_search_marginalia_parses_public_json_and_preserves_license(monkeypatch):
+    payload = {
+        "license": "CC-BY-NC-SA 4.0",
+        "results": [{"url": "https://example.com/a", "title": "Title A", "description": "Desc A"}],
+    }
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeJsonResp(payload))
+
+    out = search.search_marginalia("q", num=5)
+
+    assert out == [{
+        "title": "Title A",
+        "url": "https://example.com/a",
+        "snippet": "Desc A",
+        "license": "CC-BY-NC-SA 4.0",
+        "attribution": "https://search.marginalia.nu/",
+    }]
+
+
+def test_zero_key_json_providers_fail_closed(monkeypatch):
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeJsonResp({}, status_code=503))
+    assert search.search_wiby("q") == []
+    assert search.search_marginalia("q") == []
+
+
+def test_merge_preserves_zero_key_attribution_and_license():
+    shared = {"title": "Shared", "url": "https://example.com/a", "snippet": ""}
+    out = search.merge_results(
+        [shared],
+        [],
+        [],
+        [{**shared, "attribution": "https://wiby.me/"}],
+        [{**shared, "attribution": "https://search.marginalia.nu/", "license": "CC-BY-NC-SA 4.0"}],
+        num=5,
+    )
+    assert out[0]["engines"] == ["bing", "marginalia", "wiby"]
+    assert out[0]["attributions"] == ["https://search.marginalia.nu/", "https://wiby.me/"]
+    assert out[0]["licenses"] == ["CC-BY-NC-SA 4.0"]
+
+
+@pytest.mark.parametrize(
+    "engine",
+    ["bing", "ddg", "brave", "wiby", "marginalia", "searxng", "tavily", "google"],
+)
+def test_every_provider_uses_the_same_relevance_contract(engine):
+    unrelated = [{"title": "Property for sale", "url": "https://example.com/house", "snippet": "Apartments"}]
+    assert search._prepare_source_results("Model Context Protocol", unrelated, engine) == []
+
+
+def test_source_deduplication_keeps_one_row_and_best_text():
+    rows = [
+        {"title": "Alpha", "url": "https://example.com/a?ref=one", "snippet": "short"},
+        {"title": "Alpha result", "url": "http://www.example.com/a#section", "snippet": "a much longer snippet"},
+    ]
+    out = search._prepare_source_results("Alpha", rows, "test")
+    assert out == [{
+        "title": "Alpha result",
+        "url": "https://example.com/a?ref=one",
+        "snippet": "a much longer snippet",
+    }]
+
+
+def test_duplicate_rows_from_one_engine_do_not_add_rank_votes():
+    duplicate = {"title": "Alpha", "url": "https://example.com/a", "snippet": "Alpha result"}
+    out = search.merge_results([duplicate, duplicate], [], num=5)
+    assert out[0]["score"] == 1.0
+    assert out[0]["engines"] == ["bing"]
+
+
 # ── search() routing + fallback ──
 
-def test_search_uses_api_provider_when_keyed(monkeypatch):
+def test_search_auto_merges_configured_and_zero_key_providers(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "k")
     monkeypatch.setattr(search, "search_tavily",
                         lambda q, num=10, lang="en": [{"title": "T", "url": "https://t.com", "snippet": "s", "score": 1.0, "engines": ["tavily"]}])
-    # scraping must NOT be called
-    monkeypatch.setattr(search, "search_bing", lambda *a, **k: pytest.fail("bing should not run"))
-    monkeypatch.setattr(search, "search_ddg", lambda *a, **k: pytest.fail("ddg should not run"))
+    monkeypatch.setattr(search, "search_bing", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_ddg", lambda *a, **k: [{"title": "D", "url": "https://d.com", "snippet": ""}])
+    monkeypatch.setattr(search, "search_brave_scrape", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_wiby", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_marginalia", lambda *a, **k: [])
     out = search.search("q", num=5)
-    assert out[0]["url"] == "https://t.com"
+    assert {item["url"] for item in out} == {"https://t.com", "https://d.com"}
+    assert {engine for item in out for engine in item["engines"]} == {"tavily", "ddg"}
+
+
+def test_explicit_provider_remains_isolated(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setattr(
+        search,
+        "search_tavily",
+        lambda *a, **k: [{"title": "T", "url": "https://t.com", "snippet": "", "score": 1.0, "engines": ["tavily"]}],
+    )
+    monkeypatch.setattr(search, "search_bing", lambda *a, **k: pytest.fail("fallback should not run"))
+    out = search.search("q", num=5, provider="tavily")
+    assert [item["url"] for item in out] == ["https://t.com"]
+    assert out[0]["engines"] == ["tavily"]
 
 
 def test_search_falls_back_to_scrape_when_provider_fails(monkeypatch):
@@ -128,6 +369,9 @@ def test_search_falls_back_to_scrape_when_provider_fails(monkeypatch):
     monkeypatch.setattr(search, "search_brave", lambda q, num=10, lang="en": (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(search, "search_bing", lambda *a, **k: [{"title": "Bg", "url": "https://bing.com/x", "snippet": ""}])
     monkeypatch.setattr(search, "search_ddg", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_brave_scrape", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_wiby", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_marginalia", lambda *a, **k: [])
     out = search.search("q", num=5)
     assert any("bing.com" in r["url"] for r in out)
 
@@ -135,6 +379,12 @@ def test_search_falls_back_to_scrape_when_provider_fails(monkeypatch):
 def test_search_scrape_when_no_keys(monkeypatch):
     monkeypatch.setattr(search, "search_bing", lambda *a, **k: [{"title": "Bg", "url": "https://bing.com/x", "snippet": ""}])
     monkeypatch.setattr(search, "search_ddg", lambda *a, **k: [{"title": "Dg", "url": "https://ddg.com/y", "snippet": ""}])
+    monkeypatch.setattr(search, "search_brave_scrape", lambda *a, **k: [{"title": "Br", "url": "https://brave-hit.com/z", "snippet": ""}])
+    monkeypatch.setattr(search, "search_wiby", lambda *a, **k: [{"title": "Wi", "url": "https://wiby-hit.com/w", "snippet": "", "attribution": "https://wiby.me/"}])
+    monkeypatch.setattr(search, "search_marginalia", lambda *a, **k: [{"title": "Ma", "url": "https://marginalia-hit.com/m", "snippet": "", "license": "CC-BY-NC-SA 4.0"}])
     out = search.search("q", num=5)
     urls = {r["url"] for r in out}
-    assert "https://bing.com/x" in urls and "https://ddg.com/y" in urls
+    assert {
+        "https://bing.com/x", "https://ddg.com/y", "https://brave-hit.com/z",
+        "https://wiby-hit.com/w", "https://marginalia-hit.com/m",
+    } <= urls

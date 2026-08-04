@@ -2,14 +2,106 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
+from urllib.parse import parse_qs, quote, quote_plus, unquote, urlencode, urlparse
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests as http
 
 from .diagnostics import log
 from .fetch import _get
+
+
+_SEARCH_STOPWORDS = {
+    "the", "and", "for", "from", "with", "that", "this", "what", "where", "when",
+    "как", "для", "или", "что", "это", "где", "когда", "при", "про",
+}
+_GENERIC_SEARCH_TERMS = {
+    "context", "documentation", "docs", "guide", "github", "language", "model", "official",
+    "programming", "protocol", "search", "today", "tutorial", "weather",
+    "документация", "официальный", "официальная", "поиск", "погода", "сегодня",
+}
+
+
+def _search_terms(text):
+    return {
+        token
+        for token in re.findall(r"[\w]+", unquote(text).lower(), flags=re.UNICODE)
+        if len(token) > 2 and token not in _SEARCH_STOPWORDS
+    }
+
+
+def _validate_result_relevance(query, results, engine):
+    """Reject result pages with no meaningful lexical connection to the query.
+
+    Some zero-key sources return HTTP 200 with results unrelated to the query.
+    Require either a distinctive query term or broad coverage across generic
+    terms, then discard individual rows with no lexical connection to the query.
+    """
+    query_terms = _search_terms(query)
+    if not query_terms or not results:
+        return results
+
+    matched_terms = set()
+    overlaps = []
+    for result in results:
+        result_terms = _search_terms(
+            f"{result.get('title', '')} {result.get('snippet', '')} {result.get('url', '')}"
+        )
+        overlap = query_terms & result_terms
+        overlaps.append(overlap)
+        matched_terms.update(overlap)
+
+    distinctive_terms = query_terms - _GENERIC_SEARCH_TERMS
+    broad_coverage = 1 if len(query_terms) == 1 else max(2, (len(query_terms) * 3 + 4) // 5)
+    has_distinctive_match = bool(matched_terms & distinctive_terms)
+    has_broad_coverage = len(matched_terms) >= broad_coverage
+    if not has_distinctive_match and not has_broad_coverage:
+        log.warning(
+            "[%s] Rejected unrelated result page for query %r (matched %s/%s query terms)",
+            engine.upper(),
+            query,
+            len(matched_terms),
+            len(query_terms),
+        )
+        return []
+
+    return [
+        result
+        for result, overlap in zip(results, overlaps)
+        if (overlap & distinctive_terms) or len(overlap) >= broad_coverage
+    ]
+
+
+def _dedupe_source_results(results):
+    """Deduplicate one provider without turning repeated rows into rank votes."""
+    deduped = {}
+    order = []
+    for result in results:
+        url = str(result.get("url") or "")
+        if not url:
+            continue
+        norm = _normalize_url(url)
+        if norm not in deduped:
+            deduped[norm] = dict(result)
+            order.append(norm)
+            continue
+        current = deduped[norm]
+        if len(str(result.get("title") or "")) > len(str(current.get("title") or "")):
+            current["title"] = result["title"]
+        if len(str(result.get("snippet") or "")) > len(str(current.get("snippet") or "")):
+            current["snippet"] = result["snippet"]
+        for key in ("attribution", "license"):
+            if result.get(key) and not current.get(key):
+                current[key] = result[key]
+    return [deduped[norm] for norm in order]
+
+
+def _prepare_source_results(query, results, engine):
+    """Apply the mandatory per-source relevance and deduplication contract."""
+    relevant = _validate_result_relevance(query, results, engine)
+    return _dedupe_source_results(relevant)
 
 
 def _bing_unwrap_url(href):
@@ -37,8 +129,9 @@ def search_bing(query, num=None, lang="en", debug=False):
     if num is None:
         num = core.NUM_PER_ENGINE
 
-    params = {"q": query, "count": min(num + 5, 30), "setlang": lang, "cc": lang}
+    params = {"q": query, "count": min(num + 5, 30), "setlang": lang}
     if lang == "en":
+        params["cc"] = "US"
         params["setmkt"] = "en-US"
 
     url = f"https://www.bing.com/search?{urlencode(params)}"
@@ -58,6 +151,11 @@ def search_bing(query, num=None, lang="en", debug=False):
 
     if resp.status_code != 200:
         log.warning("[BING] HTTP %s", resp.status_code)
+        return []
+
+    response_text = resp.text.lower()
+    if "one last step" in response_text and ("captcha" in response_text or "challenge" in response_text):
+        log.warning("[BING] Blocked by anti-bot challenge for query %r", query)
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -103,7 +201,10 @@ def search_bing(query, num=None, lang="en", debug=False):
             if a and a.get("href", ""):
                 _add(a.get_text(strip=True), a["href"])
 
-    if not results:
+    had_parsed_results = bool(results)
+    results = _prepare_source_results(query, results, "bing")
+
+    if not results and not had_parsed_results:
         log.warning("[BING] Parser returned 0 results for query %r; search markup may have changed", query)
 
     if debug:
@@ -183,12 +284,217 @@ def search_ddg(query, num=None, lang="en", debug=False, df=""):
             if len(results) >= num:
                 break
 
-    if not results:
+    had_parsed_results = bool(results)
+    results = _prepare_source_results(query, results, "ddg")
+
+    if not results and not had_parsed_results:
         log.warning("[DDG] Parser returned 0 results for query %r; search markup may have changed", query)
 
     if debug:
         log.debug("[DDG] %s results", len(results))
     return results[:num]
+
+
+def search_brave_scrape(query, num=None, lang="en", debug=False):
+    """Scrape search.brave.com HTML (no API key needed)."""
+    from . import core
+
+    if num is None:
+        num = core.NUM_PER_ENGINE
+
+    url = f"https://search.brave.com/search?{urlencode({'q': query, 'source': 'web', 'spellcheck': '0'})}"
+    if debug:
+        log.debug("[BRAVE] %s", url)
+
+    try:
+        resp = _get(url, lang, extra_headers={"Referer": "https://search.brave.com/"})
+    except Exception as exc:
+        log.warning("[BRAVE] Request failed: %s", exc)
+        return []
+
+    if debug:
+        with open("debug_brave.html", "w", encoding="utf-8") as handle:
+            handle.write(resp.text)
+        log.debug("[BRAVE] Status %s, %s bytes -> debug_brave.html", resp.status_code, len(resp.text))
+
+    if resp.status_code != 200:
+        log.warning("[BRAVE] HTTP %s", resp.status_code)
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    blocks = (soup.select("div.snippet[data-type='web']")
+              or soup.select("div.snippet")
+              or soup.select("#results .snippet"))
+
+    results = []
+    seen = set()
+
+    for block in blocks:
+        a = block.select_one("a[href^='http']")
+        if not a:
+            continue
+        link = str(a.get("href", ""))
+        host = urlparse(link).hostname or ""
+        if not link.startswith("http") or host.endswith("brave.com"):
+            continue
+        norm = _normalize_url(link)
+        if norm in seen:
+            continue
+        seen.add(norm)
+
+        title_el = (block.select_one(".title")
+                    or block.select_one("div[class*='title']")
+                    or a)
+        title = title_el.get_text(" ", strip=True)
+        if not title:
+            continue
+
+        desc_el = (block.select_one(".generic-snippet .content")
+                   or block.select_one(".snippet-description")
+                   or block.select_one("div[class*='description']")
+                   or block.select_one("div[class*='snippet-content']")
+                   or block.select_one("p"))
+        snippet = desc_el.get_text(" ", strip=True) if desc_el else ""
+
+        results.append({"title": title, "url": link, "snippet": snippet})
+        if len(results) >= num:
+            break
+
+    had_parsed_results = bool(results)
+    results = _prepare_source_results(query, results, "brave")
+
+    if not results and not had_parsed_results:
+        low = resp.text.lower()
+        if any(word in low for word in ("captcha", "unusual traffic", "challenge")):
+            log.warning("[BRAVE] Blocked by anti-bot challenge for query %r", query)
+        else:
+            log.warning("[BRAVE] Parser returned 0 results for query %r; search markup may have changed", query)
+
+    if debug:
+        log.debug("[BRAVE] %s results", len(results))
+    return results[:num]
+
+
+def search_wiby(query, num=None, lang="en", debug=False):
+    """Search Wiby's public zero-key JSON endpoint."""
+    from . import core
+
+    if num is None:
+        num = core.NUM_PER_ENGINE
+
+    url = f"https://wiby.me/json/?{urlencode({'q': query})}"
+    if debug:
+        log.debug("[WIBY] %s", url)
+
+    try:
+        resp = _get(
+            url,
+            lang,
+            max_retries=0,
+            timeout=10,
+            extra_headers={"Accept": "application/json"},
+        )
+    except Exception as exc:
+        log.warning("[WIBY] Request failed: %s", exc)
+        return []
+
+    if resp.status_code != 200:
+        log.warning("[WIBY] HTTP %s", resp.status_code)
+        return []
+
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        log.warning("[WIBY] Invalid JSON response: %s", exc)
+        return []
+    if not isinstance(payload, list):
+        log.warning("[WIBY] Unexpected JSON payload")
+        return []
+
+    results = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        link = str(item.get("URL") or "").strip()
+        title = str(item.get("Title") or "").strip()
+        if not link.startswith("http") or not title:
+            continue
+        snippet = str(item.get("Snippet") or item.get("Description") or "").strip()
+        results.append({
+            "title": title,
+            "url": link,
+            "snippet": snippet,
+            "attribution": "https://wiby.me/",
+        })
+        if len(results) >= num:
+            break
+
+    results = _prepare_source_results(query, results, "wiby")
+    if debug:
+        log.debug("[WIBY] %s results", len(results))
+    return results
+
+
+def search_marginalia(query, num=None, lang="en", debug=False):
+    """Search Marginalia's shared public zero-registration API."""
+    from . import core
+
+    if num is None:
+        num = core.NUM_PER_ENGINE
+
+    count = max(1, min(num, 20))
+    url = f"https://api.marginalia.nu/public/search/{quote(query, safe='')}?{urlencode({'count': count})}"
+    if debug:
+        log.debug("[MARGINALIA] %s", url)
+
+    try:
+        resp = _get(
+            url,
+            lang,
+            max_retries=0,
+            timeout=10,
+            extra_headers={"Accept": "application/json"},
+        )
+    except Exception as exc:
+        log.warning("[MARGINALIA] Request failed: %s", exc)
+        return []
+
+    if resp.status_code != 200:
+        log.warning("[MARGINALIA] HTTP %s", resp.status_code)
+        return []
+
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        log.warning("[MARGINALIA] Invalid JSON response: %s", exc)
+        return []
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        log.warning("[MARGINALIA] Unexpected JSON payload")
+        return []
+
+    license_name = str(payload.get("license") or "CC-BY-NC-SA 4.0").strip()
+    results = []
+    for item in payload["results"]:
+        if not isinstance(item, dict):
+            continue
+        link = str(item.get("url") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not link.startswith("http") or not title:
+            continue
+        results.append({
+            "title": title,
+            "url": link,
+            "snippet": str(item.get("description") or "").strip(),
+            "license": license_name,
+            "attribution": "https://search.marginalia.nu/",
+        })
+        if len(results) >= count:
+            break
+
+    results = _prepare_source_results(query, results, "marginalia")
+    if debug:
+        log.debug("[MARGINALIA] %s results", len(results))
+    return results
 
 
 def _normalize_url(url):
@@ -199,20 +505,48 @@ def _normalize_url(url):
 
 
 
-def merge_results(bing_results, ddg_results, num=20):
-    merged = {}
+def merge_results(
+    bing_results,
+    ddg_results,
+    brave_results=None,
+    wiby_results=None,
+    marginalia_results=None,
+    num=20,
+):
+    return _merge_engine_results(
+        {
+            "bing": bing_results,
+            "ddg": ddg_results,
+            "brave": brave_results or [],
+            "wiby": wiby_results or [],
+            "marginalia": marginalia_results or [],
+        },
+        num=num,
+    )
 
-    for engine_name, results in [("bing", bing_results), ("ddg", ddg_results)]:
+
+def _merge_engine_results(engine_results, num=20):
+    """Merge any set of prepared providers into one deduplicated ranking."""
+    merged = {}
+    engine_weights = {"wiby": 0.65, "marginalia": 0.75}
+
+    for engine_name, results in engine_results.items():
+        engine_weight = engine_weights.get(engine_name, 1.0)
         for rank, result in enumerate(results, 1):
             norm = _normalize_url(result["url"])
-            position_score = 1.0 / rank
+            position_score = engine_weight / rank
             if norm in merged:
-                merged[norm]["score"] += position_score
-                merged[norm]["engines"].add(engine_name)
+                if engine_name not in merged[norm]["engines"]:
+                    merged[norm]["score"] += position_score
+                    merged[norm]["engines"].add(engine_name)
                 if len(result["snippet"]) > len(merged[norm]["snippet"]):
                     merged[norm]["snippet"] = result["snippet"]
                 if len(result["title"]) > len(merged[norm]["title"]):
                     merged[norm]["title"] = result["title"]
+                if result.get("attribution"):
+                    merged[norm]["attributions"].add(result["attribution"])
+                if result.get("license"):
+                    merged[norm]["licenses"].add(result["license"])
             else:
                 merged[norm] = {
                     "title": result["title"],
@@ -220,23 +554,32 @@ def merge_results(bing_results, ddg_results, num=20):
                     "snippet": result["snippet"],
                     "score": position_score,
                     "engines": {engine_name},
+                    "attributions": {result["attribution"]} if result.get("attribution") else set(),
+                    "licenses": {result["license"]} if result.get("license") else set(),
                 }
 
+    # Agreement bonus: +30% per extra engine that also returned the URL.
     for entry in merged.values():
-        if len(entry["engines"]) >= 2:
-            entry["score"] *= 1.3
+        overlap = len(entry["engines"]) - 1
+        if overlap > 0:
+            entry["score"] *= 1.0 + 0.3 * overlap
 
     ranked = sorted(merged.values(), key=lambda x: x["score"], reverse=True)
-    return [
-        {
+    output = []
+    for entry in ranked[:num]:
+        item = {
             "title": entry["title"],
             "url": entry["url"],
             "snippet": entry["snippet"],
             "score": round(entry["score"], 3),
             "engines": sorted(entry["engines"]),
         }
-        for entry in ranked[:num]
-    ]
+        if entry["attributions"]:
+            item["attributions"] = sorted(entry["attributions"])
+        if entry["licenses"]:
+            item["licenses"] = sorted(entry["licenses"])
+        output.append(item)
+    return output
 
 
 # ── Keyed API search providers (reliable; used before scraping when a key is set) ──
@@ -272,7 +615,7 @@ def search_tavily(query, num=10, lang="en"):
         raise RuntimeError(f"tavily HTTP {resp.status_code}")
     results = resp.json().get("results", []) or []
     items = [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")} for r in results]
-    return _normalize_api(items, "tavily")
+    return _prepare_source_results(query, _normalize_api(items, "tavily"), "tavily")
 
 
 def search_brave(query, num=10, lang="en"):
@@ -289,7 +632,7 @@ def search_brave(query, num=10, lang="en"):
         raise RuntimeError(f"brave HTTP {resp.status_code}")
     results = (resp.json().get("web", {}) or {}).get("results", []) or []
     items = [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("description", "")} for r in results]
-    return _normalize_api(items, "brave")
+    return _prepare_source_results(query, _normalize_api(items, "brave"), "brave")
 
 
 def search_google(query, num=10, lang="en"):
@@ -306,7 +649,7 @@ def search_google(query, num=10, lang="en"):
         raise RuntimeError(f"google HTTP {resp.status_code}")
     results = resp.json().get("items", []) or []
     items = [{"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")} for r in results]
-    return _normalize_api(items, "google")
+    return _prepare_source_results(query, _normalize_api(items, "google"), "google")
 
 
 def _searxng_url() -> str:
@@ -343,7 +686,7 @@ def search_searxng(query, num=10, lang="en"):
         }
         for result in results[: max(1, min(num, 50))]
     ]
-    return _normalize_api(items, "searxng")
+    return _prepare_source_results(query, _normalize_api(items, "searxng"), "searxng")
 
 
 # Map provider name → function name; resolved via globals() at call time so the
@@ -353,6 +696,8 @@ _DIRECT_PROVIDERS = {
     "tavily": "search_tavily",
     "brave": "search_brave",
     "google": "search_google",
+    "wiby": "search_wiby",
+    "marginalia": "search_marginalia",
 }
 
 
@@ -360,8 +705,8 @@ def _provider_order(provider):
     """Decide which keyed providers to try, in priority order.
 
     auto: configured SearXNG, then every provider that has its key set.
-    A specific name forces just that provider. 'scrape' skips APIs entirely.
-    Scraping Bing+DDG is always the final fallback regardless.
+    A specific name forces just that provider. 'scrape' skips configured providers.
+    Zero-key Bing/DDG/Brave/Wiby/Marginalia discovery is always the final fallback.
     """
     provider = (provider or "auto").lower()
     keyed = {
@@ -380,36 +725,61 @@ def _provider_order(provider):
 def search(query, num=20, lang="en", debug=False, provider="auto"):
     from . import core
 
-    # 1. Configured JSON/API providers first. First non-empty response wins.
-    for name in _provider_order(provider):
+    requested_provider = (provider or "auto").lower()
+    direct_results = {}
+
+    # An explicitly selected provider remains isolated by definition.
+    if requested_provider in _DIRECT_PROVIDERS:
+        name = requested_provider
         try:
             results = globals()[_DIRECT_PROVIDERS[name]](query, num=num, lang=lang)
+            results = _prepare_source_results(query, results, name)
             if results:
                 log.info("[SEARCH] provider=%s -> %s results", name, len(results))
-                return results[:num]
+                return _merge_engine_results({name: results}, num=num)
             log.info("[SEARCH] provider=%s returned 0 results, trying next", name)
         except Exception as exc:
             log.warning("[SEARCH] provider %s failed: %s", name, exc)
+        return []
 
-    # 2. Fallback: scrape Bing + DDG in parallel and merge (original behaviour).
-    bing_r = []
-    ddg_r = []
+    # In auto mode, every configured provider contributes to the final merge.
+    configured_order = [] if requested_provider == "scrape" else _provider_order("auto")
+    for name in configured_order:
+        try:
+            results = globals()[_DIRECT_PROVIDERS[name]](query, num=num, lang=lang)
+            prepared = _prepare_source_results(query, results, name)
+            if prepared:
+                direct_results[name] = prepared
+                log.info("[SEARCH] provider=%s -> %s results", name, len(prepared))
+            else:
+                log.info("[SEARCH] provider=%s returned 0 results", name)
+        except Exception as exc:
+            log.warning("[SEARCH] provider %s failed: %s", name, exc)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    # 2. Fallback: query all zero-key discovery sources in parallel and merge.
+    scraped = {"bing": [], "ddg": [], "brave": [], "wiby": [], "marginalia": []}
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {
             pool.submit(search_bing, query, core.NUM_PER_ENGINE, lang, debug): "bing",
             pool.submit(search_ddg, query, core.NUM_PER_ENGINE, lang, debug): "ddg",
+            pool.submit(search_brave_scrape, query, core.NUM_PER_ENGINE, lang, debug): "brave",
+            pool.submit(search_wiby, query, core.NUM_PER_ENGINE, lang, debug): "wiby",
+            pool.submit(search_marginalia, query, core.NUM_PER_ENGINE, lang, debug): "marginalia",
         }
         for future in as_completed(futures):
             engine = futures[future]
             try:
-                results = future.result()
-                if engine == "bing":
-                    bing_r = results
-                else:
-                    ddg_r = results
+                scraped[engine] = _prepare_source_results(query, future.result(), engine)
             except Exception as exc:
                 log.warning("[%s] Error: %s", engine.upper(), exc)
 
-    log.info("[MERGE] Bing: %s, DDG: %s; merging", len(bing_r), len(ddg_r))
-    return merge_results(bing_r, ddg_r, num=num)
+    log.info(
+        "[MERGE] Bing: %s, DDG: %s, Brave: %s, Wiby: %s, Marginalia: %s; merging",
+        len(scraped["bing"]), len(scraped["ddg"]), len(scraped["brave"]),
+        len(scraped["wiby"]), len(scraped["marginalia"]),
+    )
+    combined = dict(direct_results)
+    for name, results in scraped.items():
+        combined[name] = _prepare_source_results(query, combined.get(name, []) + results, name)
+    return _merge_engine_results(combined, num=num)

@@ -98,7 +98,8 @@ Give each person only their own value. To revoke access, remove that user from
 the JSON and redeploy; the other keys keep working. Limits are held in memory,
 which is appropriate for this one-instance Free service and reset on restart.
 
-No API keys are required to start — search falls back to scraping Bing + DuckDuckGo. Add
+No API keys are required to start — search falls back to zero-key Bing, DuckDuckGo, Brave,
+Wiby, and Marginalia discovery. Add
 keys later under `"env"` (see [Search backends](#search-backends)). Pass `--headed` to watch
 the browser tier work.
 
@@ -156,7 +157,7 @@ machine.
 
 | Tool | Description |
 |------|-------------|
-| `web_search` | Configured SearXNG first, then keyed providers, then scraped Bing + DuckDuckGo. Snippets are discovery only. |
+| `web_search` | Configured SearXNG first, then keyed providers, then zero-key Bing, DuckDuckGo, Brave, Wiby, and Marginalia. Snippets are discovery only. |
 | `web_search_recent` | Search restricted to a recency window (day/week/month/year). |
 | `web_deep_search` | Automatically route across web/papers/encyclopedia/GitHub/archive sources, then fetch, extract, rerank, and return source context. |
 | `web_read` | Fetch one URL, extract text, classify source quality, persist cache metadata. |
@@ -235,8 +236,11 @@ A controlled Chromium session for JS-heavy or interactive pages:
 ## Search backends
 
 `web_search` routes through a provider layer. A configured zero-key SearXNG instance is tried
-first, followed by keyed providers and finally scraped Bing + DuckDuckGo. Results are
-normalized to one shape regardless of backend.
+first, followed by keyed providers and finally zero-key Bing, DuckDuckGo, Brave, Wiby, and
+Marginalia. Results are
+normalized to one shape regardless of backend. Every provider is relevance-filtered and
+deduplicated before cross-provider merging; repeated URLs from the same provider do not receive
+an agreement bonus.
 
 | Provider | Env vars | Notes |
 |----------|----------|-------|
@@ -244,11 +248,13 @@ normalized to one shape regardless of backend.
 | Tavily | `TAVILY_API_KEY` | LLM-oriented search API. |
 | Brave | `BRAVE_API_KEY` | Independent web index. |
 | Google | `GOOGLE_API_KEY` + `GOOGLE_CSE_ID` | Programmable Search (Custom Search JSON API). |
-| Bing + DuckDuckGo | none | Default fallback; scraped, no key. |
+| Bing + DuckDuckGo + Brave | none | Default fallback; scraped, no key. |
+| Wiby | none | Public JSON endpoint; result metadata includes required Wiby attribution. |
+| Marginalia | none | Shared public API; result metadata preserves its `CC-BY-NC-SA 4.0` license. |
 
-`auto` (default) tries configured providers in order SearXNG → Tavily → Brave → Google,
-then scrapes. Force one with the `provider` argument
-(`searxng`/`tavily`/`brave`/`google`/`scrape`).
+`auto` (default) queries every configured provider plus every zero-key fallback and merges the
+complete result set. Force one isolated backend with the `provider` argument
+(`searxng`/`tavily`/`brave`/`google`/`wiby`/`marginalia`/`scrape`).
 
 ### Specialized zero-key discovery
 
@@ -325,7 +331,7 @@ docker run -i --rm footnote-mcp        # the client launches this; see MCP confi
 Published images are available from GitHub Container Registry:
 
 ```bash
-docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.3
+docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.4
 docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:latest
 ```
 

@@ -17,9 +17,9 @@ from .tools_data.cache import _read_cache, _write_cache
 
 
 def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto", semantic: bool = False) -> dict:
-    """Search via configured SearXNG/keyed providers, else scraped Bing + DDG.
+    """Search via configured providers, else zero-key Bing/DDG/Brave/Wiby/Marginalia.
 
-    ``provider``: auto | searxng | tavily | brave | google | scrape. Results are merged into a
+    ``provider``: auto | searxng | tavily | brave | google | wiby | marginalia | scrape. Results are merged into a
     single shape regardless of backend.
     ``semantic``: rerank results by meaning using local bge-m3 embeddings (best-effort;
     over-fetches candidates, reorders by query similarity, then trims to ``num``).
@@ -46,6 +46,8 @@ def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "aut
                 "snippet": r["snippet"],
                 "score": r["score"],
                 "engines": r["engines"],
+                **({"attributions": r["attributions"]} if "attributions" in r else {}),
+                **({"licenses": r["licenses"]} if "licenses" in r else {}),
                 **({"semantic_score": r["semantic_score"]} if "semantic_score" in r else {}),
             }
             for r in results

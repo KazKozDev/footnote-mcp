@@ -192,14 +192,14 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="web_search",
-            description="General web discovery. Uses configured SearXNG first, then keyed providers, then scraped Bing + DuckDuckGo. Returns normalized titles, URLs, snippets and scores.",
+            description="General web discovery. Uses configured SearXNG first, then keyed providers, then zero-key Bing, DuckDuckGo, Brave, Wiby, and Marginalia. Returns normalized titles, URLs, snippets and scores.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "lang": {"type": "string", "description": "Language code: en, ru, etc.", "default": "en"},
                     "num": {"type": "integer", "description": "Max results to return", "default": 10},
-                    "provider": {"type": "string", "description": "auto | searxng | tavily | brave | google | scrape", "default": "auto"},
+                    "provider": {"type": "string", "description": "auto | searxng | tavily | brave | google | wiby | marginalia | scrape", "default": "auto"},
                     "semantic": {"type": "boolean", "description": "Rerank results by meaning using local bge-m3 embeddings", "default": False},
                 },
                 "required": ["query"],
@@ -221,7 +221,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "provider": {
                         "type": "string",
-                        "description": "Web provider: auto | searxng | tavily | brave | google | scrape",
+                        "description": "Web provider: auto | searxng | tavily | brave | google | wiby | marginalia | scrape",
                         "default": "auto",
                     },
                     "num": {"type": "integer", "description": "Maximum discovery results before fetching", "default": 20},
@@ -824,7 +824,7 @@ async def main():
 
     init_opts = InitializationOptions(
         server_name="footnote",
-        server_version="0.2.3",
+        server_version="0.2.4",
         capabilities=ServerCapabilities(tools={}),
     )
     async with stdio_server() as (read, write):
