@@ -799,3 +799,58 @@ def test_single_answer_question_never_gets_a_set_operation_plan(monkeypatch):
         budget=deep_research.ResearchBudget(max_iterations=1),
     )
     assert result["state"]["aggregation_plan"] == {}
+
+
+def test_a_preferred_dataset_steers_search_but_never_rejects_a_fact():
+    requirement = deep_research.ResearchRequirement(
+        id="r1", text="island counts", subject="Nation", metric="Islands",
+        scope={"dataset": "World Atlas"}, predicate="Islands",
+    )
+    state = deep_research.ResearchState(query="q", requirements=[requirement])
+
+    def model(_messages):
+        return {"items": [{
+            "requirement_id": "r1", "source_id": "S1", "entity": "Indonesia",
+            "predicate": "Islands", "value": "17508", "qualifiers": {},
+        }]}
+
+    chunk = {
+        "segment_id": "row-1", "text": "Indonesia | 17508", "context_text": "HEADER: Country | Islands",
+        "source_url": "https://example.test/islands", "source_title": "List of islands by country",
+        "extraction_type": "table", "provenance": {},
+    }
+    verified, _, _ = deep_research._extract_and_verify_batch(
+        [requirement], {"r1": [chunk]}, iteration=1, model_json=model,
+        entailment_backend="heuristic", entailment_model=None, state=state, max_context_chars=4000,
+    )
+    assert len(verified) == 1
+    assert state.diagnostics["evidence_rejections"] == {}
+    # The preference is kept on the record rather than silently dropped.
+    assert verified[0].provenance["preferred_sources"] == {"dataset": "World Atlas"}
+    assert verified[0].scope == {"dataset": "World Atlas"}
+
+
+def test_a_scoping_organization_still_rejects_a_different_body():
+    requirement = deep_research.ResearchRequirement(
+        id="r1", text="absent members", metric="absent",
+        scope={"organization": "Toronto and Region Conservation Authority"}, predicate="absent",
+    )
+    state = deep_research.ResearchState(query="q", requirements=[requirement])
+
+    def model(_messages):
+        return {"items": [{
+            "requirement_id": "r1", "source_id": "S1", "entity": "Ada",
+            "predicate": "absent", "value": "Absent", "qualifiers": {},
+        }]}
+
+    chunk = {
+        "segment_id": "row-1", "text": "Ada | Absent", "context_text": "attendance",
+        "source_url": "https://example.test", "source_title": "Credit Valley Conservation minutes",
+        "extraction_type": "table", "provenance": {},
+    }
+    verified, _, _ = deep_research._extract_and_verify_batch(
+        [requirement], {"r1": [chunk]}, iteration=1, model_json=model,
+        entailment_backend="heuristic", entailment_model=None, state=state, max_context_chars=4000,
+    )
+    assert verified == []
+    assert state.diagnostics["evidence_rejections"] == {"requirement_scope_not_grounded": 1}

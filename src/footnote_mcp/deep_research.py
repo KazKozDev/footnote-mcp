@@ -46,6 +46,11 @@ _QUALIFIER_ABSENT = "absent"
 _QUALIFIER_CONFLICT = "conflict"
 
 _SCOPE_STOPWORDS = {"the", "of", "and", "for", "a", "an", "de", "la", "del"}
+
+# Scope keys that constrain what a fact is about, and may therefore reject it.
+# Everything else the planner puts in scope (dataset, source, publication) names
+# a preferred reference and only steers discovery.
+_IDENTITY_SCOPE_KEYS = {"organization", "jurisdiction", "geography"}
 _MAGNITUDES = ("thousand", "thousands", "million", "millions", "billion", "billions", "trillion", "trillions")
 
 # Ambiguous one-letter abbreviations are deliberately absent: matching "m" or "t"
@@ -1172,7 +1177,16 @@ def _extract_and_verify_batch(
         required_scope = dict(requirement.scope)
         identity_scope = {
             key: value for key, value in required_scope.items()
-            if key.casefold() in {"organization", "dataset", "jurisdiction", "source", "geography"}
+            if key.casefold() in _IDENTITY_SCOPE_KEYS
+        }
+        # A dataset or publication named in the question ("according to World
+        # Atlas") is a routing preference for discovery, not part of what the
+        # fact is about: the same island count is still that island count when a
+        # different reference work states it. Only a scoping body or place
+        # constrains the claim's identity and may therefore reject evidence.
+        preferred_sources = {
+            key: value for key, value in required_scope.items()
+            if key.casefold() not in _IDENTITY_SCOPE_KEYS and value
         }
         if any(value and not _scope_is_grounded(value, scope_text) for value in identity_scope.values()):
             reject("requirement_scope_not_grounded")
@@ -1267,6 +1281,7 @@ def _extract_and_verify_batch(
                 "segment_id": str(chunk.get("segment_id") or ""),
                 **dict(chunk.get("provenance") or {}),
                 "qualifier_grounding": qualifier_grounding,
+                **({"preferred_sources": preferred_sources} if preferred_sources else {}),
             },
             **fields,
         )
