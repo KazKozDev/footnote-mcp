@@ -29,8 +29,9 @@ _PROVIDER_COOLDOWN_UNTIL: dict[str, float] = {}
 _PROVIDER_COOLDOWN_LOCK = threading.Lock()
 _PROVIDER_COOLDOWN_DEFAULTS = {"brave": 300.0, "ddg": 120.0}
 _PROVIDER_FALLBACK_COOLDOWN = 180.0
-_PROVIDER_FAILURE_LIMIT = 3
-_PROVIDER_FAILURES: dict[str, int] = {}
+# Engines that can rest. Used to tell "this one is resting" from "there is
+# nothing left to ask", which must never happen.
+_BACKOFF_ENGINES = ("bing", "ddg", "brave", "marginalia", "wiby")
 
 
 def _provider_cooldown_seconds(engine, response=None):
@@ -60,41 +61,24 @@ def _start_provider_cooldown(engine, response=None):
 
 
 def _provider_on_cooldown(engine):
+    now = time.monotonic()
     with _PROVIDER_COOLDOWN_LOCK:
         until = _PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0)
-        remaining = until - time.monotonic()
+        remaining = until - now
         if remaining <= 0:
             _PROVIDER_COOLDOWN_UNTIL.pop(engine, None)
             return False
+        everything_resting = all(
+            _PROVIDER_COOLDOWN_UNTIL.get(name, 0.0) > now for name in _BACKOFF_ENGINES
+        )
+    if everything_resting:
+        # Backoff exists to stop paying for a broken endpoint, not to switch
+        # search off. With nothing else left to ask, a blocked attempt still
+        # beats returning no candidates at all.
+        log.warning("[%s] Every provider is resting; querying anyway", engine.upper())
+        return False
     log.debug("[%s] Cooldown active; skipping request for %.0fs", engine.upper(), remaining)
     return True
-
-
-def _record_provider_failure(engine):
-    """Park a provider that keeps failing instead of paying its timeout every query.
-
-    A blocked or unreachable endpoint costs the same latency on every request of
-    a run, which starves later requirements of their search budget.
-    """
-    with _PROVIDER_COOLDOWN_LOCK:
-        failures = _PROVIDER_FAILURES.get(engine, 0) + 1
-        _PROVIDER_FAILURES[engine] = failures
-    if failures < _PROVIDER_FAILURE_LIMIT:
-        return
-    seconds = _provider_cooldown_seconds(engine)
-    with _PROVIDER_COOLDOWN_LOCK:
-        _PROVIDER_FAILURES[engine] = 0
-        _PROVIDER_COOLDOWN_UNTIL[engine] = max(
-            _PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0), time.monotonic() + seconds
-        )
-    log.warning(
-        "[%s] %d consecutive failures; pausing for %.0fs", engine.upper(), failures, seconds
-    )
-
-
-def _record_provider_success(engine):
-    with _PROVIDER_COOLDOWN_LOCK:
-        _PROVIDER_FAILURES.pop(engine, None)
 
 
 def _search_terms(text):
@@ -202,9 +186,6 @@ def search_bing(query, num=None, lang="en", debug=False):
     if num is None:
         num = core.NUM_PER_ENGINE
 
-    if _provider_on_cooldown("bing"):
-        return []
-
     params = {"q": query, "count": min(num + 5, 30), "setlang": lang}
     if lang == "en":
         params["cc"] = "US"
@@ -232,9 +213,7 @@ def search_bing(query, num=None, lang="en", debug=False):
     response_text = resp.text.lower()
     if "one last step" in response_text and ("captcha" in response_text or "challenge" in response_text):
         log.warning("[BING] Blocked by anti-bot challenge for query %r", query)
-        _record_provider_failure("bing")
         return []
-    _record_provider_success("bing")
 
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []
@@ -532,9 +511,6 @@ def search_marginalia(query, num=None, lang="en", debug=False):
     if num is None:
         num = core.NUM_PER_ENGINE
 
-    if _provider_on_cooldown("marginalia"):
-        return []
-
     count = max(1, min(num, 20))
     url = f"https://api.marginalia.nu/public/search/{quote(query, safe='')}?{urlencode({'count': count})}"
     if debug:
@@ -550,15 +526,12 @@ def search_marginalia(query, num=None, lang="en", debug=False):
         )
     except Exception as exc:
         log.warning("[MARGINALIA] Request failed: %s", exc)
-        _record_provider_failure("marginalia")
         return []
 
     if resp.status_code != 200:
         log.warning("[MARGINALIA] HTTP %s", resp.status_code)
-        _record_provider_failure("marginalia")
         return []
 
-    _record_provider_success("marginalia")
     try:
         payload = resp.json()
     except Exception as exc:

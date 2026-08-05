@@ -447,41 +447,23 @@ def test_search_auto_marginalia_merges_opt_in_provider(monkeypatch):
     assert out[0]["licenses"] == ["CC-BY-NC-SA 4.0"]
 
 
-def test_repeated_provider_failures_park_the_endpoint(monkeypatch):
-    monkeypatch.setattr(search, "_PROVIDER_COOLDOWN_UNTIL", {})
-    monkeypatch.setattr(search, "_PROVIDER_FAILURES", {})
+def test_a_rate_limit_never_silences_every_provider(monkeypatch):
+    import time as _time
 
-    calls = []
+    resting = {name: _time.monotonic() + 300 for name in search._BACKOFF_ENGINES}
+    monkeypatch.setattr(search, "_PROVIDER_COOLDOWN_UNTIL", resting)
 
-    def timing_out(*args, **kwargs):
-        calls.append(args[0])
-        raise TimeoutError("Operation timed out")
+    # With nothing left to ask, every engine must still be queried.
+    for engine in search._BACKOFF_ENGINES:
+        assert search._provider_on_cooldown(engine) is False
 
-    monkeypatch.setattr(search, "_get", timing_out)
 
-    for _ in range(search._PROVIDER_FAILURE_LIMIT):
-        assert search.search_marginalia("query", num=5) == []
-    attempts_before_cooldown = len(calls)
+def test_one_resting_provider_is_skipped_while_others_work(monkeypatch):
+    import time as _time
 
-    # Further queries must not pay the timeout again while the provider is parked.
-    assert search.search_marginalia("another query", num=5) == []
-    assert len(calls) == attempts_before_cooldown
+    monkeypatch.setattr(
+        search, "_PROVIDER_COOLDOWN_UNTIL", {"marginalia": _time.monotonic() + 300}
+    )
+
     assert search._provider_on_cooldown("marginalia") is True
-
-
-def test_a_successful_response_clears_the_failure_streak(monkeypatch):
-    monkeypatch.setattr(search, "_PROVIDER_COOLDOWN_UNTIL", {})
-    monkeypatch.setattr(search, "_PROVIDER_FAILURES", {"marginalia": search._PROVIDER_FAILURE_LIMIT - 1})
-
-    class _Response:
-        status_code = 200
-
-        @staticmethod
-        def json():
-            return {"results": []}
-
-    monkeypatch.setattr(search, "_get", lambda *a, **k: _Response())
-
-    assert search.search_marginalia("query", num=5) == []
-    assert search._PROVIDER_FAILURES.get("marginalia") is None
-    assert search._provider_on_cooldown("marginalia") is False
+    assert search._provider_on_cooldown("bing") is False
