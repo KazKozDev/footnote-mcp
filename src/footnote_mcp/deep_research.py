@@ -1011,6 +1011,35 @@ def _unit_verdict(expected: str, observed: str, grounding_text: str) -> str:
     return _QUALIFIER_ABSENT
 
 
+def _dump_extraction_exchange(
+    requirement_id: str,
+    section: str,
+    payload: dict[str, Any],
+    error: str,
+    *,
+    iteration: int,
+) -> None:
+    """Record what the extractor was shown and what it answered, when asked to.
+
+    Set FOOTNOTE_EXTRACTION_DUMP to a path. Off by default: this writes whole
+    document segments and is a debugging aid, not run output.
+    """
+    target = os.getenv("FOOTNOTE_EXTRACTION_DUMP")
+    if not target:
+        return
+    try:
+        with open(target, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "requirement_id": requirement_id,
+                "iteration": iteration,
+                "section": section,
+                "response": payload,
+                "error": error,
+            }, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def _provenance_header_text(chunk: dict) -> str:
     """Surface a segment's own coordinates: column headers, captions, page headers."""
     provenance = chunk.get("provenance") or {}
@@ -1095,15 +1124,19 @@ def _extract_and_verify_batch(
     )
     extracted_with_scope: list[tuple[str, dict]] = []
     for prompt_requirement_id, section in source_sections:
+        payload: dict[str, Any] = {}
+        error = ""
         try:
             payload = model_json([{"role": "user", "content": instruction + section}])
             for row in payload.get("items") or []:
                 if isinstance(row, dict):
                     extracted_with_scope.append((prompt_requirement_id, row))
         except Exception as exc:
+            error = str(exc)
             state.diagnostics["model_errors"].append(
                 f"evidence extraction {prompt_requirement_id}: {exc}"
             )
+        _dump_extraction_exchange(prompt_requirement_id, section, payload, error, iteration=iteration)
 
     requirement_lookup = {item.id: item for item in requirements}
     extracted = [row for _, row in extracted_with_scope]
