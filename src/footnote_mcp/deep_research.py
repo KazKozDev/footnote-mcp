@@ -910,11 +910,30 @@ def _acronym(value: str) -> str:
 
 
 def _scope_is_grounded(value: str, text: str) -> bool:
-    """Accept an organization stated either in full or by its own acronym."""
+    """Accept the organization in full, by acronym, or by its distinctive majority.
+
+    Documents shorten their own publisher ("Electoral Commission" for "New Zealand
+    Electoral Commission"), so demanding every token rejects the right source.
+    A majority of the name still separates it from a different body, which is what
+    this check exists to do.
+    """
     if _field_is_grounded(value, text):
         return True
     acronym = _acronym(value)
-    return bool(acronym) and len(acronym) >= 3 and bool(re.search(rf"\b{re.escape(acronym)}\b", _norm(text)))
+    if acronym and len(acronym) >= 3 and re.search(rf"\b{re.escape(acronym)}\b", _norm(text)):
+        return True
+    tokens = [token for token in _norm(value).split() if token not in _SCOPE_STOPWORDS]
+    if len(tokens) < 3:
+        return False
+    # Only a contiguous run of the name counts as the same body. Sharing loose
+    # tokens does not: "Other Authority" must never satisfy "Target Authority".
+    source = f" {_norm(text)} "
+    runs = {
+        " ".join(tokens[start:start + length])
+        for length in range(2, len(tokens))
+        for start in range(0, len(tokens) - length + 1)
+    }
+    return any(f" {run} " in source for run in runs)
 
 
 def _canonical_unit(text: str) -> str:

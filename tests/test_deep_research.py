@@ -503,6 +503,16 @@ def test_scope_accepts_an_organization_stated_by_acronym():
     )
 
 
+def test_scope_accepts_a_publisher_that_shortens_its_own_name():
+    assert deep_research._scope_is_grounded(
+        "New Zealand Electoral Commission", "Electoral Commission official results"
+    )
+    # A different body sharing one generic word is still rejected.
+    assert not deep_research._scope_is_grounded(
+        "New Zealand Electoral Commission", "Australian Bureau of Statistics commission report"
+    )
+
+
 def test_single_answer_cannot_leave_all_items_completion_rule():
     requirements, answer_type, _ = deep_research.decompose_requirements("Where is it?", lambda _messages: {
         "answer_type": "single",
