@@ -35,11 +35,73 @@ FetchCall = Callable[..., dict[str, Any]]
 ProgressCall = Callable[[str, dict[str, Any]], None]
 
 _FILE_EXTENSIONS = (".csv", ".tsv", ".xlsx", ".xls", ".pdf", ".json")
-_FIELD_NAMES = ("subject", "metric", "period", "value", "unit")
 _DOWNLOAD_HINTS = ("csv", "tsv", "xlsx", "excel", "pdf", "download", "meeting minutes", "minutes link")
 _MONTHS = (
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
+)
+
+_QUALIFIER_GROUNDED = "grounded"
+_QUALIFIER_ABSENT = "absent"
+_QUALIFIER_CONFLICT = "conflict"
+
+_SCOPE_STOPWORDS = {"the", "of", "and", "for", "a", "an", "de", "la", "del"}
+_MAGNITUDES = ("thousand", "thousands", "million", "millions", "billion", "billions", "trillion", "trillions")
+
+# Ambiguous one-letter abbreviations are deliberately absent: matching "m" or "t"
+# inside arbitrary prose invents units that no document actually states.
+_UNIT_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("percent", ("percent", "percentage", "percentages", "pct", "%")),
+    ("usd", ("usd", "dollar", "dollars", "$")),
+    ("eur", ("eur", "euro", "euros", "€")),
+    ("gbp", ("gbp", "sterling", "£")),
+    ("kilogram", ("kg", "kgs", "kilogram", "kilograms", "kilogramme", "kilogrammes")),
+    ("gram", ("gram", "grams")),
+    ("tonne", ("tonne", "tonnes")),
+    ("pound_mass", ("lb", "lbs", "pound", "pounds")),
+    ("metre", ("meter", "meters", "metre", "metres")),
+    ("kilometre", ("km", "kilometer", "kilometers", "kilometre", "kilometres")),
+    ("mile", ("mile", "miles")),
+    ("square_kilometre", ("km2", "sq km", "square kilometer", "square kilometers", "square kilometre", "square kilometres")),
+    ("square_mile", ("sq mi", "square mile", "square miles")),
+    ("celsius", ("celsius", "centigrade")),
+    ("fahrenheit", ("fahrenheit",)),
+    ("year", ("year", "years")),
+    ("day", ("day", "days")),
+    ("hour", ("hour", "hours")),
+)
+
+_UNIT_DIMENSIONS = {
+    "usd": "currency", "eur": "currency", "gbp": "currency",
+    "kilogram": "mass", "gram": "mass", "tonne": "mass", "pound_mass": "mass",
+    "metre": "length", "kilometre": "length", "mile": "length",
+    "square_kilometre": "area", "square_mile": "area",
+    "celsius": "temperature", "fahrenheit": "temperature",
+    "year": "duration", "day": "duration", "hour": "duration",
+    "percent": "ratio",
+}
+
+# Entity-shaped "units" name the row type, not a measurement.  A requirement that
+# says unit="people" is describing what is counted; no document must repeat it.
+_ENTITY_UNIT_TOKENS = {
+    "count", "counts", "number", "numbers", "item", "items", "entry", "entries",
+    "person", "persons", "people", "individual", "individuals", "signer", "signers",
+    "member", "members", "country", "countries", "state", "states", "species",
+    "seat", "seats", "name", "names", "record", "records", "row", "rows",
+    "company", "companies", "organization", "organizations", "city", "cities",
+}
+
+_ENUMERATION_CUE = re.compile(
+    r"(?:^|\n)\s*(?:[-*•·]|\d+[.)])\s+|\bthe following\b|\bas follows\b|\bin attendance\b",
+    re.I,
+)
+
+# Filter and exclusion steps are operations over other requirements' results;
+# they have no independent document to find, so they must not gate the answer.
+_SUPPORTING_STEP = re.compile(
+    r"^\s*(?:filter|exclude|excluding|remove|restrict|narrow|eliminate|discard|subtract|omit)\b"
+    r"|\bexclude any\b|\bexcluding (?:any|those)\b|\bonly (?:those|the ones)\b",
+    re.I,
 )
 
 
@@ -85,6 +147,7 @@ class ResearchRequirement:
     qualifiers: dict[str, str] = field(default_factory=dict)
     completion_rule: str = "single"
     expected_count: int | None = None
+    necessity: str = "required"
     status: str = "unresolved"
     gap: str = ""
     queries: list[str] = field(default_factory=list)
@@ -153,12 +216,25 @@ class ResearchState:
         },
     })
 
+    candidate_entities: list[dict[str, Any]] = field(default_factory=list)
+
     def unresolved(self) -> list[ResearchRequirement]:
         return [requirement for requirement in self.requirements if requirement.status != "covered"]
+
+    def blocking(self) -> list[ResearchRequirement]:
+        """Open gaps that must close before an answer may be produced.
+
+        Filter and exclusion steps are executed over the ledger, so leaving them
+        "unresolved" must not veto a question whose evidence requirements are met.
+        """
+        required = [item for item in self.requirements if item.necessity == "required"]
+        candidates = required or self.requirements
+        return [item for item in candidates if item.status != "covered"]
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["unresolved_requirements"] = [item.id for item in self.unresolved()]
+        payload["blocking_requirements"] = [item.id for item in self.blocking()]
         payload["coverage"] = round(
             sum(item.status == "covered" for item in self.requirements) / max(1, len(self.requirements)),
             4,
@@ -235,6 +311,13 @@ def _heuristic_requirement(query: str) -> ResearchRequirement:
     )
 
 
+def _classify_necessity(text: str, declared: Any = "") -> str:
+    """Demote filter/exclusion steps: they consume evidence, they do not gather it."""
+    if _SUPPORTING_STEP.search(str(text or "")):
+        return "supporting"
+    return "supporting" if str(declared or "").strip().casefold() == "supporting" else "required"
+
+
 def _aggregation_plan(query: str) -> dict[str, Any]:
     """Recognize list operations that must be executed deterministically."""
     normalized = _norm(query)
@@ -246,6 +329,15 @@ def _aggregation_plan(query: str) -> dict[str, Any]:
             "operation": "group_count_filter", "group_by": "entity",
             "operator": ">=", "threshold": int(match.group(1)),
         }
+    if re.search(
+        r"\b(excluding|except|other than|but not|apart from|did not|never|were not|was not|without)\b",
+        normalized,
+    ):
+        return {"operation": "set_difference", "group_by": "entity"}
+    if re.search(r"\b(as well as|in addition to|common to|appear in both|intersection)\b", normalized) or re.search(
+        r"\bboth\b.+\band\b", normalized
+    ):
+        return {"operation": "set_intersection", "group_by": "entity"}
     return {}
 
 
@@ -311,8 +403,11 @@ def decompose_requirements(query: str, model_json: JSONCall | None = None) -> tu
             "Decompose the research question into independently verifiable requirements. Return JSON with "
             "'answer_type' ('single' or 'set') and 'requirements'. Each requirement must contain: id, text, "
             "subject, metric, period, unit, scope (object), predicate, qualifiers (object), "
-            "completion_rule ('single', 'count', or 'all_items'), and optional "
-            "expected_count. Scope may contain only literal organization, dataset, jurisdiction, source, or "
+            "completion_rule ('single', 'count', or 'all_items'), necessity, and optional "
+            "expected_count. Set necessity to 'required' for a requirement that needs its own source "
+            "document, and to 'supporting' for a step that only filters or excludes items already "
+            "gathered by another requirement. "
+            "Scope may contain only literal organization, dataset, jurisdiction, source, or "
             "geography names that an authoritative document should state; otherwise use an empty object. "
             "Do not put entity types such as Country/Person or logical conditions in scope. Do not answer the "
             "question and do not invent a period or unit.\n\nQUESTION:\n" + query
@@ -348,6 +443,7 @@ def decompose_requirements(query: str, model_json: JSONCall | None = None) -> tu
             qualifiers=_string_map(row.get("qualifiers"), "context"),
             completion_rule=rule,
             expected_count=expected,
+            necessity=_classify_necessity(text, row.get("necessity")),
             gap=text,
         ))
         requirement = requirements[-1]
@@ -457,6 +553,11 @@ def _rank_documents(requirement: ResearchRequirement, documents: list[dict], lim
     return [{**documents[item["source_idx"]], "document_relevance": item.get("relevance", 0.0)} for item in ranked]
 
 
+def _looks_enumerated(text: str) -> bool:
+    """Detect a segment that presents a list rather than a single statement."""
+    return bool(_ENUMERATION_CUE.search(str(text or "")))
+
+
 def _parsed_file_chunks(parsed: dict, source_url: str) -> tuple[list[dict], int]:
     """Convert parsed files into addressable evidence segments, never whole-file blobs."""
     chunks: list[dict] = []
@@ -480,7 +581,8 @@ def _parsed_file_chunks(parsed: dict, source_url: str) -> tuple[list[dict], int]
                 "provenance": {
                     "segment_type": "table_row", "table_index": table_index,
                     "row_index": row_position, "columns": columns, "cells": dict(cells),
-                    "complete_set": complete_set,
+                    "caption": caption,
+                    "complete_set": complete_set, "enumeration": True,
                 },
             })
         row_count += len(rows)
@@ -502,7 +604,9 @@ def _parsed_file_chunks(parsed: dict, source_url: str) -> tuple[list[dict], int]
                 "provenance": {
                     "segment_type": "pdf_lines", "page": page_number,
                     "line_start": start + 1, "line_end": start + len(block),
+                    "page_header": page_header,
                     "complete_set": complete_set,
+                    "enumeration": complete_set or _looks_enumerated(text),
                 },
             })
     if "json" in parsed:
@@ -741,7 +845,10 @@ def _rank_chunks_for_requirements(
                 "chunk_idx": chunk_idx,
                 "extraction_type": "text",
                 "requirements": list(document.get("requirements") or []),
-                "provenance": {"segment_type": "text_chunk", "chunk_index": chunk_idx, "complete_set": False},
+                "provenance": {
+                    "segment_type": "text_chunk", "chunk_index": chunk_idx,
+                    "complete_set": False, "enumeration": _looks_enumerated(text),
+                },
             })
         for extra_idx, item in enumerate(structured_items, len(text_chunks)):
             all_chunks.append({
@@ -786,13 +893,6 @@ def _rank_chunks_for_requirements(
     return ranked
 
 
-def _claim_from_item(item: dict) -> str:
-    if item.get("claim"):
-        return str(item["claim"]).strip()
-    fields = [str(item.get(name) or "").strip() for name in _FIELD_NAMES]
-    return " ".join(value for value in fields if value)
-
-
 def _field_is_grounded(value: str, quote: str) -> bool:
     wanted = _norm(value)
     source = _norm(quote)
@@ -804,149 +904,104 @@ def _field_is_grounded(value: str, quote: str) -> bool:
     return bool(tokens) and all(token in source for token in tokens)
 
 
-def _unit_is_grounded(unit: str, text: str, value: str) -> bool:
-    """Validate physical units while treating entity types as schema, not units."""
-    if not unit or _field_is_grounded(unit, text):
-        return True
-    normalized = _norm(unit)
-    source = text.casefold()
-    if "$" in unit and "$" in text:
-        return True
-    entity_units = {
-        "count", "number", "item", "items", "people", "persons", "individuals",
-        "countries", "states", "members", "signers", "species", "seats", "names",
-    }
-    entity_unit_tokens = {"person", "persons", "people", "individual", "individuals", "signer", "signers", "member", "members", "country", "countries", "state", "states", "species", "seat", "seats", "name", "names"}
-    if normalized in entity_units or bool(set(normalized.split()) & entity_unit_tokens):
-        return bool(value)
-    if any(token in normalized for token in ("percent", "percentage")) and "%" in source:
-        return True
-    currency = any(token in normalized for token in ("usd", "dollar", "currency"))
-    if currency and ("$" in text or "dollar" in source or "usd" in source):
-        return True
-    if "billion" in normalized and re.search(r"\b(?:billion|bn|b)\b", source):
-        return True
-    if "million" in normalized and re.search(r"\b(?:million|mn|m)\b", source):
-        return True
-    return False
+def _acronym(value: str) -> str:
+    words = [word for word in _norm(value).split() if word not in _SCOPE_STOPWORDS]
+    return "".join(word[0] for word in words) if len(words) >= 2 else ""
 
 
-def _extract_and_verify(
-    requirement: ResearchRequirement,
-    chunks: list[dict],
-    *,
-    iteration: int,
-    model_json: JSONCall | None,
-    entailment_backend: str,
-    entailment_model: str | None,
-    state: ResearchState,
-) -> tuple[list[EvidenceItem], list[EvidenceItem], int]:
-    if not chunks or model_json is None:
-        return [], [], 0
-    sources = []
-    source_lookup = {}
-    for index, chunk in enumerate(chunks, 1):
-        source_id = f"S{index}"
-        source_lookup[source_id] = chunk
-        sources.append(
-            f"[{source_id}] URL: {chunk.get('source_url', '')}\nTITLE: {chunk.get('source_title', '')}\n"
-            f"TYPE: {chunk.get('extraction_type', 'text')}\nTEXT:\n{chunk.get('text', '')[:5000]}"
-        )
-    prompt = [{
-        "role": "user",
-        "content": (
-            "Extract candidate evidence for exactly one requirement. Return JSON with 'items'. Every item must "
-            "contain source_id, claim, subject, metric, period, value, unit, and an exact verbatim quote copied "
-            "from that source. Every nonempty field value must itself appear verbatim in the quote; use empty "
-            "strings for metric, period, or unit when they are not literally stated or not applicable. Do not infer or combine "
-            "values across sources. For list or attendance evidence, emit one item per named entity: subject is "
-            "that entity's exact name and value is its observed value or status; never put multiple entity names "
-            "inside value. When the requirement specifies a period, the contiguous quote must include both that "
-            "period and the fact. Return no item when the source does not directly state the fact.\n\nREQUIREMENT:\n"
-            + json.dumps(asdict(requirement), ensure_ascii=False)
-            + "\n\nSOURCES:\n"
-            + "\n\n".join(sources)
-        ),
-    }]
-    try:
-        payload = model_json(prompt)
-    except Exception as exc:
-        state.diagnostics["model_errors"].append(f"evidence extraction {requirement.id}: {exc}")
-        return [], [], 0
-    extracted = payload.get("items") or []
-    verified = []
-    contradictions = []
+def _scope_is_grounded(value: str, text: str) -> bool:
+    """Accept an organization stated either in full or by its own acronym."""
+    if _field_is_grounded(value, text):
+        return True
+    acronym = _acronym(value)
+    return bool(acronym) and len(acronym) >= 3 and bool(re.search(rf"\b{re.escape(acronym)}\b", _norm(text)))
 
-    def reject(reason: str) -> None:
-        counts = state.diagnostics["evidence_rejections"]
-        counts[reason] = counts.get(reason, 0) + 1
 
-    for row in extracted:
-        source_id = str(row.get("source_id") or "")
-        chunk = source_lookup.get(source_id)
-        if not chunk:
-            reject("unknown_source_id")
-            continue
-        scope_text = " ".join([
-            str(chunk.get("text") or ""),
-            str(chunk.get("source_title") or ""),
-            str(chunk.get("source_url") or ""),
-        ])
-        if requirement.subject and not _field_is_grounded(requirement.subject, scope_text):
-            reject("requirement_subject_not_grounded")
-            continue
-        quote = str(row.get("quote") or "").strip()
-        chunk_text_value = str(chunk.get("text") or "")
-        if not quote or _norm(quote) not in _norm(chunk_text_value):
-            reject("quote_not_verbatim")
-            continue
-        fields = {name: str(row.get(name) or "").strip() for name in _FIELD_NAMES}
-        if not fields["value"]:
-            reject("missing_value")
-            continue
-        ungrounded_fields = [name for name, value in fields.items() if not _field_is_grounded(value, quote)]
-        if ungrounded_fields:
-            for name in ungrounded_fields:
-                reject(f"{name}_not_grounded_in_quote")
-            continue
-        for name in ("period", "unit"):
-            expected = getattr(requirement, name)
-            if expected and not _field_is_grounded(expected, quote):
-                reject(f"required_{name}_not_grounded")
+def _canonical_unit(text: str) -> str:
+    """Map a unit label onto a canonical id; entity-shaped labels map to ''."""
+    normalized = _norm(text)
+    if not normalized:
+        return ""
+    meaningful = set(normalized.split()) - set(_MAGNITUDES)
+    if meaningful and meaningful <= _ENTITY_UNIT_TOKENS:
+        return ""
+    found = _units_in_text(text)
+    return sorted(found)[0] if found else ""
+
+
+def _units_in_text(text: str) -> set[str]:
+    """Collect the measurement units a piece of text actually states."""
+    normalized = _norm(text)
+    raw = str(text or "").casefold()
+    found = set()
+    for canonical, aliases in _UNIT_ALIASES:
+        for alias in aliases:
+            matched = (
+                bool(re.search(rf"\b{re.escape(alias)}\b", normalized))
+                if alias.isalpha()
+                else alias in raw
+            )
+            if matched:
+                found.add(canonical)
                 break
-        else:
-            claim = _claim_from_item(row)
-            verdict = evidence_entailment(
-                claim,
-                quote,
-                backend=entailment_backend,
-                model=entailment_model,
-            )
-            status = str(verdict.get("status") or "unsupported")
-            evidence = EvidenceItem(
-                id=_stable_id(
-                    "ev", requirement.id, fields["subject"], fields["metric"], fields["period"],
-                    fields["value"], fields["unit"], chunk.get("source_url", ""),
-                ),
-                requirement_id=requirement.id,
-                claim=claim,
-                quote=quote,
-                source_url=str(chunk.get("source_url") or ""),
-                source_title=str(chunk.get("source_title") or ""),
-                status=status,
-                score=float(verdict.get("score") or 0.0),
-                verification=str(verdict.get("backend") or entailment_backend),
-                iteration=iteration,
-                extraction_type=str(chunk.get("extraction_type") or "text"),
-                **fields,
-            )
-            if status == "supported":
-                verified.append(evidence)
-            elif status == "contradicted":
-                contradictions.append(evidence)
-            else:
-                reject(f"entailment_{status}")
-    return verified, contradictions, len(extracted)
+    return found
+
+
+def _period_signature(text: str) -> tuple[set[str], set[str]]:
+    normalized = _norm(text)
+    months = {month for month in _MONTHS if re.search(rf"\b{month}\b", normalized)}
+    years = set(re.findall(r"\b(?:1[6-9]|20)\d{2}\b", str(text or "")))
+    return months, years
+
+
+def _period_verdict(expected: str, observed: str, grounding_text: str) -> str:
+    """A period the document never states is missing context, not a mismatch."""
+    if not expected:
+        return _QUALIFIER_GROUNDED
+    if _field_is_grounded(expected, observed) or _field_is_grounded(expected, grounding_text):
+        return _QUALIFIER_GROUNDED
+    expected_months, expected_years = _period_signature(expected)
+    for candidate in (observed, grounding_text):
+        months, years = _period_signature(candidate)
+        if expected_years and years and not (expected_years & years):
+            return _QUALIFIER_CONFLICT
+        if expected_months and months and not (expected_months & months):
+            return _QUALIFIER_CONFLICT
+    return _QUALIFIER_ABSENT
+
+
+def _unit_verdict(expected: str, observed: str, grounding_text: str) -> str:
+    """Reject a unit the document contradicts; tolerate one it simply omits.
+
+    The planner invents `unit` before any document is seen, so demanding that the
+    label appear verbatim rejects correct facts whose unit lives in a column
+    header or is implicit.  Only a rival unit of the same dimension is a defect.
+    """
+    if not expected:
+        return _QUALIFIER_GROUNDED
+    canonical = _canonical_unit(expected)
+    if not canonical:
+        # Entity-shaped label: the requirement counts things, it does not measure them.
+        return _QUALIFIER_GROUNDED
+    stated = _units_in_text(observed) | _units_in_text(grounding_text)
+    if canonical in stated:
+        return _QUALIFIER_GROUNDED
+    dimension = _UNIT_DIMENSIONS.get(canonical)
+    if dimension and any(_UNIT_DIMENSIONS.get(unit) == dimension for unit in stated):
+        return _QUALIFIER_CONFLICT
+    return _QUALIFIER_ABSENT
+
+
+def _provenance_header_text(chunk: dict) -> str:
+    """Surface a segment's own coordinates: column headers, captions, page headers."""
+    provenance = chunk.get("provenance") or {}
+    parts = [str(value) for value in provenance.get("columns") or []]
+    for key in ("caption", "sheet", "page_header", "table_caption"):
+        if provenance.get(key):
+            parts.append(str(provenance[key]))
+    if provenance.get("page"):
+        parts.append(f"page {provenance['page']}")
+    return " | ".join(part for part in parts if part)
 
 
 def _extract_and_verify_batch(
@@ -1067,7 +1122,7 @@ def _extract_and_verify_batch(
             key: value for key, value in required_scope.items()
             if key.casefold() in {"organization", "dataset", "jurisdiction", "source", "geography"}
         }
-        if any(value and not _field_is_grounded(value, scope_text) for value in identity_scope.values()):
+        if any(value and not _scope_is_grounded(value, scope_text) for value in identity_scope.values()):
             reject("requirement_scope_not_grounded")
             continue
         entity = str(row.get("entity") or row.get("subject") or "").strip()
@@ -1089,7 +1144,16 @@ def _extract_and_verify_batch(
         if not _field_is_grounded(value, fact_text):
             reject("value_not_grounded_in_segment")
             continue
-        grounding_text = " ".join([fact_text, context_text, str(chunk.get("source_title") or "")])
+        # Qualifiers are checked against every coordinate of the same document
+        # segment - the row, its surrounding context, the column header, the page
+        # header and the document title - because a period or unit legitimately
+        # lives in a header rather than in the sentence carrying the value.
+        grounding_text = " ".join([
+            fact_text,
+            context_text,
+            str(chunk.get("source_title") or ""),
+            _provenance_header_text(chunk),
+        ])
         required_qualifiers = {
             key: value for key, value in requirement.qualifiers.items()
             if key.casefold() in {"period", "unit"}
@@ -1098,59 +1162,68 @@ def _extract_and_verify_batch(
             required_qualifiers.setdefault("period", requirement.period)
         if requirement.unit:
             required_qualifiers.setdefault("unit", requirement.unit)
+        qualifier_grounding: dict[str, str] = {}
+        conflicting = ""
         for name, expected in required_qualifiers.items():
-            grounded = _unit_is_grounded(expected, grounding_text, value) if name == "unit" else _field_is_grounded(expected, grounding_text)
-            if expected and not grounded:
-                reject(f"required_{name}_not_grounded")
+            if not expected:
+                continue
+            check = _unit_verdict if name == "unit" else _period_verdict
+            outcome = check(expected, qualifiers.get(name, ""), grounding_text)
+            qualifier_grounding[name] = outcome
+            if outcome == _QUALIFIER_CONFLICT:
+                conflicting = name
                 break
+        if conflicting:
+            reject(f"required_{conflicting}_conflicts_with_document")
+            continue
+        fields = {
+            "subject": entity, "metric": predicate,
+            "period": qualifiers.get("period", requirement.period),
+            "value": value, "unit": qualifiers.get("unit", requirement.unit),
+        }
+        claim = str(row.get("claim") or " ".join(filter(None, [entity, predicate, value]))).strip()
+        verdict = evidence_entailment(
+            claim,
+            grounding_text,
+            backend=entailment_backend,
+            model=entailment_model,
+        )
+        status = str(verdict.get("status") or "unsupported")
+        evidence = EvidenceItem(
+            id=_stable_id(
+                "ev", requirement.id, entity, predicate, fields["period"], value,
+                fields["unit"], chunk.get("source_url", ""), chunk.get("segment_id", ""),
+            ),
+            requirement_id=requirement.id,
+            claim=claim,
+            quote=fact_text,
+            source_url=str(chunk.get("source_url") or ""),
+            source_title=str(chunk.get("source_title") or ""),
+            status=status,
+            score=float(verdict.get("score") or 0.0),
+            verification=str(verdict.get("backend") or entailment_backend),
+            iteration=iteration,
+            extraction_type=str(chunk.get("extraction_type") or "text"),
+            scope=dict(required_scope),
+            entity=entity,
+            predicate=predicate,
+            qualifiers=qualifiers,
+            fact_quote=fact_text,
+            context_quote=context_text,
+            provenance={
+                "document_id": _stable_id("doc", chunk.get("source_url", "")),
+                "segment_id": str(chunk.get("segment_id") or ""),
+                **dict(chunk.get("provenance") or {}),
+                "qualifier_grounding": qualifier_grounding,
+            },
+            **fields,
+        )
+        if status == "supported":
+            verified.append(evidence)
+        elif status == "contradicted":
+            contradictions.append(evidence)
         else:
-            fields = {
-                "subject": entity, "metric": predicate,
-                "period": qualifiers.get("period", requirement.period),
-                "value": value, "unit": qualifiers.get("unit", requirement.unit),
-            }
-            claim = str(row.get("claim") or " ".join(filter(None, [entity, predicate, value]))).strip()
-            verdict = evidence_entailment(
-                claim,
-                grounding_text,
-                backend=entailment_backend,
-                model=entailment_model,
-            )
-            status = str(verdict.get("status") or "unsupported")
-            evidence = EvidenceItem(
-                id=_stable_id(
-                    "ev", requirement.id, entity, predicate, fields["period"], value,
-                    fields["unit"], chunk.get("source_url", ""), chunk.get("segment_id", ""),
-                ),
-                requirement_id=requirement.id,
-                claim=claim,
-                quote=fact_text,
-                source_url=str(chunk.get("source_url") or ""),
-                source_title=str(chunk.get("source_title") or ""),
-                status=status,
-                score=float(verdict.get("score") or 0.0),
-                verification=str(verdict.get("backend") or entailment_backend),
-                iteration=iteration,
-                extraction_type=str(chunk.get("extraction_type") or "text"),
-                scope=dict(required_scope),
-                entity=entity,
-                predicate=predicate,
-                qualifiers=qualifiers,
-                fact_quote=fact_text,
-                context_quote=context_text,
-                provenance={
-                    "document_id": _stable_id("doc", chunk.get("source_url", "")),
-                    "segment_id": str(chunk.get("segment_id") or ""),
-                    **dict(chunk.get("provenance") or {}),
-                },
-                **fields,
-            )
-            if status == "supported":
-                verified.append(evidence)
-            elif status == "contradicted":
-                contradictions.append(evidence)
-            else:
-                reject(f"entailment_{status}")
+            reject(f"entailment_{status}")
     return verified, contradictions, len(extracted)
 
 
@@ -1182,27 +1255,84 @@ def _compare_count(value: int, operator: str, threshold: int) -> bool:
     }.get(operator, False)
 
 
-def _aggregate_evidence(state: ResearchState) -> None:
-    plan = state.aggregation_plan
-    if plan.get("operation") != "group_count_filter":
-        state.derived_answer = []
-        return
-    occurrences: dict[str, set[str]] = {}
-    labels: dict[str, str] = {}
+def _candidate_entity_table(state: ResearchState) -> dict[str, dict[str, Any]]:
+    """Collapse the ledger into one row per entity, keyed by normalized name.
+
+    This is the shared table every set operation runs over, so join, intersection
+    and exclusion all see the same entities rather than each re-deriving them.
+    """
+    table: dict[str, dict[str, Any]] = {}
     for item in state.evidence:
         entity = item.entity or item.subject
         if not entity:
             continue
-        key = _norm(entity)
-        labels.setdefault(key, entity)
-        qualifier_key = item.qualifiers.get("period") or item.period or item.requirement_id
-        occurrences.setdefault(key, set()).add(qualifier_key)
-    operator = str(plan.get("operator") or ">")
-    threshold = int(plan.get("threshold") or 0)
-    state.derived_answer = sorted(
-        [labels[key] for key, values in occurrences.items() if _compare_count(len(values), operator, threshold)],
-        key=str.casefold,
-    )
+        row = table.setdefault(_norm(entity), {
+            "label": entity, "requirements": set(), "periods": set(), "sources": set(),
+        })
+        row["requirements"].add(item.requirement_id)
+        row["periods"].add(item.qualifiers.get("period") or item.period or item.requirement_id)
+        row["sources"].add(item.source_url)
+    return table
+
+
+def _aggregate_evidence(state: ResearchState) -> None:
+    """Derive the answer set from the ledger with code, never with the model."""
+    table = _candidate_entity_table(state)
+    state.candidate_entities = [
+        {
+            "entity": row["label"],
+            "requirements": sorted(row["requirements"]),
+            "periods": sorted(row["periods"]),
+            "sources": sorted(row["sources"]),
+        }
+        for _, row in sorted(table.items())
+    ]
+    operation = str(state.aggregation_plan.get("operation") or "")
+    if not operation:
+        state.derived_answer = []
+        return
+    required_ids = {item.id for item in state.requirements if item.necessity == "required"}
+    supporting_ids = {item.id for item in state.requirements if item.necessity == "supporting"}
+    if operation == "group_count_filter":
+        operator = str(state.aggregation_plan.get("operator") or ">")
+        threshold = int(state.aggregation_plan.get("threshold") or 0)
+        selected = [
+            row["label"] for row in table.values()
+            if _compare_count(len(row["periods"]), operator, threshold)
+        ]
+    elif operation == "set_difference":
+        # Membership comes from the requirements that gather; exclusion comes from
+        # the filter steps. An entity survives only when no filter step matched it.
+        selected = [
+            row["label"] for row in table.values()
+            if (not required_ids or row["requirements"] & required_ids)
+            and not (row["requirements"] & supporting_ids)
+        ]
+    elif operation == "set_intersection":
+        selected = [
+            row["label"] for row in table.values()
+            if required_ids and row["requirements"] >= required_ids
+        ]
+    else:
+        selected = []
+    state.derived_answer = sorted(dict.fromkeys(selected), key=str.casefold)
+
+
+def _set_is_closed(requirement: ResearchRequirement, evidence: list[EvidenceItem]) -> bool:
+    """Decide whether an exhaustive requirement may be treated as complete.
+
+    An authoritative container (an untruncated table, an explicit attendance
+    block) closes the set outright.  Absent that, a met expected_count or two
+    independent documents carrying the same enumeration are the only completeness
+    signals actually available, and requiring the container alone left every set
+    question permanently `partially_covered`.
+    """
+    if any(bool(item.provenance.get("complete_set")) for item in evidence):
+        return True
+    if requirement.expected_count is not None and len(evidence) >= requirement.expected_count:
+        return True
+    enumerated = [item for item in evidence if item.provenance.get("enumeration")]
+    return len({item.source_url for item in enumerated}) >= 2
 
 
 def _assess_coverage(state: ResearchState, model_json: JSONCall | None = None) -> None:
@@ -1218,14 +1348,11 @@ def _assess_coverage(state: ResearchState, model_json: JSONCall | None = None) -
         elif requirement.completion_rule == "count" and requirement.expected_count is not None and len(evidence) >= requirement.expected_count:
             requirement.status = "covered"
         elif requirement.completion_rule == "all_items" and evidence:
-            if any(bool(item.provenance.get("complete_set")) for item in evidence):
-                requirement.status = "covered"
-            else:
-                requirement.status = "partially_covered"
+            requirement.status = "covered" if _set_is_closed(requirement, evidence) else "partially_covered"
         if requirement.status != "covered":
             requirement.gap = requirement.gap or requirement.text
     _aggregate_evidence(state)
-    state.answer_ready = not state.unresolved()
+    state.answer_ready = bool(state.evidence) and not state.blocking()
     if state.aggregation_plan and not state.derived_answer:
         # An empty derived list can be a valid answer only with explicit negative-set evidence,
         # which is not represented yet.
@@ -1275,7 +1402,9 @@ def run_deep_research(
     requirements, answer_type, planner_error = decompose_requirements(query, model_json)
     state = ResearchState(
         query=query, requirements=requirements, answer_type=answer_type,
-        aggregation_plan=_aggregation_plan(query),
+        # Set operations only describe list answers. Running one for a single-answer
+        # question would gate that answer on a derived list it never needs.
+        aggregation_plan=_aggregation_plan(query) if answer_type == "set" else {},
     )
     emit("requirements_ready", requirements=len(requirements), answer_type=answer_type)
     if planner_error:
@@ -1491,6 +1620,7 @@ def run_deep_research(
             "coverage_assessed",
             iteration=iteration,
             unresolved=len(state.unresolved()),
+            blocking=len(state.blocking()),
             answer_ready=state.answer_ready,
         )
 
@@ -1508,6 +1638,8 @@ def run_deep_research(
             "new_verified_evidence": added,
             "contradictions": len(iteration_contradictions),
             "unresolved_requirements": [item.id for item in state.unresolved()],
+            "blocking_requirements": [item.id for item in state.blocking()],
+            "derived_answer": list(state.derived_answer),
             "selected_document_urls": [item.get("url", "") for item in selected_documents],
             "successful_fetch_urls": [item.get("url", "") for item in successful],
             "ranked_chunk_sources": {
@@ -1531,7 +1663,11 @@ def run_deep_research(
         state.stop_reason = "iteration_budget_exhausted"
 
     _aggregate_evidence(state)
-    state.answer_ready = not state.unresolved() and (not state.aggregation_plan or bool(state.derived_answer))
+    state.answer_ready = (
+        bool(state.evidence)
+        and not state.blocking()
+        and (not state.aggregation_plan or bool(state.derived_answer))
+    )
     emit(
         "research_complete",
         stop_reason=state.stop_reason,

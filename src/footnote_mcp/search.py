@@ -28,15 +28,19 @@ _GENERIC_SEARCH_TERMS = {
 _PROVIDER_COOLDOWN_UNTIL: dict[str, float] = {}
 _PROVIDER_COOLDOWN_LOCK = threading.Lock()
 _PROVIDER_COOLDOWN_DEFAULTS = {"brave": 300.0, "ddg": 120.0}
+_PROVIDER_FALLBACK_COOLDOWN = 180.0
+_PROVIDER_FAILURE_LIMIT = 3
+_PROVIDER_FAILURES: dict[str, int] = {}
 
 
 def _provider_cooldown_seconds(engine, response=None):
     """Return a bounded rate-limit cooldown, honoring Retry-After when present."""
     env_name = f"FOOTNOTE_{engine.upper()}_COOLDOWN_SECONDS"
+    default = _PROVIDER_COOLDOWN_DEFAULTS.get(engine, _PROVIDER_FALLBACK_COOLDOWN)
     try:
-        seconds = max(0.0, float(os.getenv(env_name, _PROVIDER_COOLDOWN_DEFAULTS[engine])))
+        seconds = max(0.0, float(os.getenv(env_name, default)))
     except (TypeError, ValueError):
-        seconds = _PROVIDER_COOLDOWN_DEFAULTS[engine]
+        seconds = default
     headers = getattr(response, "headers", {}) or {}
     try:
         seconds = max(seconds, float(headers.get("Retry-After", 0)))
@@ -64,6 +68,33 @@ def _provider_on_cooldown(engine):
             return False
     log.debug("[%s] Cooldown active; skipping request for %.0fs", engine.upper(), remaining)
     return True
+
+
+def _record_provider_failure(engine):
+    """Park a provider that keeps failing instead of paying its timeout every query.
+
+    A blocked or unreachable endpoint costs the same latency on every request of
+    a run, which starves later requirements of their search budget.
+    """
+    with _PROVIDER_COOLDOWN_LOCK:
+        failures = _PROVIDER_FAILURES.get(engine, 0) + 1
+        _PROVIDER_FAILURES[engine] = failures
+    if failures < _PROVIDER_FAILURE_LIMIT:
+        return
+    seconds = _provider_cooldown_seconds(engine)
+    with _PROVIDER_COOLDOWN_LOCK:
+        _PROVIDER_FAILURES[engine] = 0
+        _PROVIDER_COOLDOWN_UNTIL[engine] = max(
+            _PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0), time.monotonic() + seconds
+        )
+    log.warning(
+        "[%s] %d consecutive failures; pausing for %.0fs", engine.upper(), failures, seconds
+    )
+
+
+def _record_provider_success(engine):
+    with _PROVIDER_COOLDOWN_LOCK:
+        _PROVIDER_FAILURES.pop(engine, None)
 
 
 def _search_terms(text):
@@ -171,6 +202,9 @@ def search_bing(query, num=None, lang="en", debug=False):
     if num is None:
         num = core.NUM_PER_ENGINE
 
+    if _provider_on_cooldown("bing"):
+        return []
+
     params = {"q": query, "count": min(num + 5, 30), "setlang": lang}
     if lang == "en":
         params["cc"] = "US"
@@ -198,7 +232,9 @@ def search_bing(query, num=None, lang="en", debug=False):
     response_text = resp.text.lower()
     if "one last step" in response_text and ("captcha" in response_text or "challenge" in response_text):
         log.warning("[BING] Blocked by anti-bot challenge for query %r", query)
+        _record_provider_failure("bing")
         return []
+    _record_provider_success("bing")
 
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []
@@ -496,6 +532,9 @@ def search_marginalia(query, num=None, lang="en", debug=False):
     if num is None:
         num = core.NUM_PER_ENGINE
 
+    if _provider_on_cooldown("marginalia"):
+        return []
+
     count = max(1, min(num, 20))
     url = f"https://api.marginalia.nu/public/search/{quote(query, safe='')}?{urlencode({'count': count})}"
     if debug:
@@ -511,12 +550,15 @@ def search_marginalia(query, num=None, lang="en", debug=False):
         )
     except Exception as exc:
         log.warning("[MARGINALIA] Request failed: %s", exc)
+        _record_provider_failure("marginalia")
         return []
 
     if resp.status_code != 200:
         log.warning("[MARGINALIA] HTTP %s", resp.status_code)
+        _record_provider_failure("marginalia")
         return []
 
+    _record_provider_success("marginalia")
     try:
         payload = resp.json()
     except Exception as exc:

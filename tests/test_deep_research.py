@@ -458,12 +458,49 @@ def test_planner_normalizes_na_and_unit_aliases_are_deterministic():
     })
     assert requirements[0].period == ""
     assert requirements[0].unit == ""
-    assert deep_research._unit_is_grounded("USD billions", "$42 billion", "$42 billion")
-    assert deep_research._unit_is_grounded("$ billions", "$42,000,000,000", "$42,000,000,000")
-    assert deep_research._unit_is_grounded("percentage", "Value: 4.2%", "4.2%")
-    assert deep_research._unit_is_grounded("people", "Ada Lovelace", "Ada Lovelace")
-    assert deep_research._unit_is_grounded("person names", "Ada Lovelace", "Ada Lovelace")
-    assert not deep_research._unit_is_grounded("kilograms", "Value: 42", "42")
+
+
+def test_unit_verdict_separates_a_stated_conflict_from_a_missing_label():
+    grounded = deep_research._QUALIFIER_GROUNDED
+    absent = deep_research._QUALIFIER_ABSENT
+    conflict = deep_research._QUALIFIER_CONFLICT
+
+    assert deep_research._unit_verdict("USD billions", "", "$42 billion") == grounded
+    assert deep_research._unit_verdict("percentage", "", "Value: 4.2%") == grounded
+    # Entity-shaped labels describe the row type, so no document must repeat them.
+    assert deep_research._unit_verdict("people", "", "Ada Lovelace") == grounded
+    assert deep_research._unit_verdict("person names", "", "Ada Lovelace") == grounded
+    # A unit the document never states is missing context, not a mismatch.
+    assert deep_research._unit_verdict("kilograms", "", "Value: 42") == absent
+    # A rival unit of the same dimension is a genuine defect.
+    assert deep_research._unit_verdict("kilograms", "", "Weight: 42 pounds") == conflict
+    assert deep_research._unit_verdict("USD", "", "Revenue: 42 million euros") == conflict
+
+
+def test_unit_lives_in_the_column_header_not_the_row():
+    chunk = {
+        "text": "Norway | 42",
+        "context_text": "HEADER: Country | Revenue",
+        "provenance": {"columns": ["Country", "Revenue (USD billions)"]},
+    }
+    grounding = " ".join([chunk["text"], chunk["context_text"], deep_research._provenance_header_text(chunk)])
+    assert deep_research._unit_verdict("USD billions", "", grounding) == deep_research._QUALIFIER_GROUNDED
+
+
+def test_period_verdict_rejects_a_different_month_but_tolerates_silence():
+    assert deep_research._period_verdict("September 2021", "", "Minutes of the September 2021 meeting") == deep_research._QUALIFIER_GROUNDED
+    assert deep_research._period_verdict("September 2021", "", "Minutes of the October 2021 meeting") == deep_research._QUALIFIER_CONFLICT
+    assert deep_research._period_verdict("September 2021", "", "Minutes of the September 2019 meeting") == deep_research._QUALIFIER_CONFLICT
+    assert deep_research._period_verdict("September 2021", "", "Paula Fletcher was absent") == deep_research._QUALIFIER_ABSENT
+
+
+def test_scope_accepts_an_organization_stated_by_acronym():
+    assert deep_research._scope_is_grounded(
+        "Toronto and Region Conservation Authority", "TRCA Executive Committee minutes"
+    )
+    assert not deep_research._scope_is_grounded(
+        "Toronto and Region Conservation Authority", "Credit Valley Conservation minutes"
+    )
 
 
 def test_single_answer_cannot_leave_all_items_completion_rule():
@@ -573,6 +610,152 @@ def test_ledger_group_count_filter_derives_list_in_code():
     assert state.derived_answer == ["Ada"]
 
 
+def _evidence(requirement_id, entity, *, source_url="u", period="", provenance=None):
+    return deep_research.EvidenceItem(
+        id=f"{requirement_id}-{entity}-{source_url}", requirement_id=requirement_id, claim="",
+        subject=entity, metric="m", period=period, value="v", unit="", quote="",
+        source_url=source_url, source_title="t", status="supported", score=1,
+        verification="test", iteration=1, entity=entity, predicate="m",
+        qualifiers={"period": period} if period else {},
+        provenance=dict(provenance or {}),
+    )
+
+
+def test_filter_steps_are_supporting_and_do_not_block_the_answer():
+    requirements, _, _ = deep_research.decompose_requirements("Question", lambda _messages: {
+        "answer_type": "set",
+        "requirements": [
+            {"id": "r1", "text": "Identify the set of individuals who signed the Declaration.", "completion_rule": "all_items"},
+            {"id": "r2", "text": "Filter the identified signers to exclude any who served as President.", "completion_rule": "all_items"},
+        ],
+    })
+    assert [item.necessity for item in requirements] == ["required", "supporting"]
+
+    state = deep_research.ResearchState(query="q", requirements=requirements)
+    state.evidence.append(_evidence("r1", "Button Gwinnett", provenance={"complete_set": True}))
+    deep_research._assess_coverage(state)
+    assert [item.id for item in state.unresolved()] == ["r2"]
+    assert state.blocking() == []
+    assert state.answer_ready is True
+
+
+def test_answer_is_never_ready_without_ledger_evidence():
+    requirement = deep_research.ResearchRequirement(id="r1", text="fact", status="covered")
+    state = deep_research.ResearchState(query="q", requirements=[requirement])
+    deep_research._assess_coverage(state)
+    assert state.answer_ready is False
+
+
+def test_exclusion_question_is_answered_by_set_difference_over_the_entity_table():
+    requirements = [
+        deep_research.ResearchRequirement(id="r1", text="Identify the signers", completion_rule="all_items"),
+        deep_research.ResearchRequirement(
+            id="r2", text="Exclude any individual who served as President", necessity="supporting",
+        ),
+    ]
+    state = deep_research.ResearchState(
+        query="Which signers of the Declaration never served as President?",
+        requirements=requirements,
+        aggregation_plan=deep_research._aggregation_plan(
+            "Which signers of the Declaration never served as President?"
+        ),
+    )
+    assert state.aggregation_plan["operation"] == "set_difference"
+    state.evidence.extend([
+        _evidence("r1", "John Adams"),
+        _evidence("r1", "Button Gwinnett"),
+        _evidence("r2", "John Adams"),
+    ])
+    deep_research._aggregate_evidence(state)
+    assert state.derived_answer == ["Button Gwinnett"]
+    assert [row["entity"] for row in state.candidate_entities] == ["Button Gwinnett", "John Adams"]
+
+
+def test_intersection_question_keeps_only_entities_meeting_every_requirement():
+    requirements = [
+        deep_research.ResearchRequirement(id="r1", text="Cities hosting the summit"),
+        deep_research.ResearchRequirement(id="r2", text="Cities on the coast"),
+    ]
+    state = deep_research.ResearchState(
+        query="Which cities hosted the summit as well as sitting on the coast?",
+        requirements=requirements,
+        aggregation_plan={"operation": "set_intersection", "group_by": "entity"},
+    )
+    state.evidence.extend([
+        _evidence("r1", "Lisbon"), _evidence("r2", "Lisbon"), _evidence("r1", "Vienna"),
+    ])
+    deep_research._aggregate_evidence(state)
+    assert state.derived_answer == ["Lisbon"]
+
+
+def test_exhaustive_set_closes_on_corroborating_documents_without_a_container():
+    requirement = deep_research.ResearchRequirement(id="r1", text="all members", completion_rule="all_items")
+    partial = [_evidence("r1", "Ada", source_url="https://one.test", provenance={"enumeration": True})]
+    assert deep_research._set_is_closed(requirement, partial) is False
+
+    corroborated = partial + [
+        _evidence("r1", "Ada", source_url="https://two.test", provenance={"enumeration": True})
+    ]
+    assert deep_research._set_is_closed(requirement, corroborated) is True
+
+    counted = deep_research.ResearchRequirement(
+        id="r1", text="all members", completion_rule="all_items", expected_count=1,
+    )
+    assert deep_research._set_is_closed(counted, partial) is True
+
+
+def test_unit_absent_from_the_document_no_longer_rejects_the_fact():
+    requirement = deep_research.ResearchRequirement(
+        id="r1", text="population", subject="Norway", metric="population", unit="people",
+        predicate="population", qualifiers={"unit": "people"},
+    )
+    state = deep_research.ResearchState(query="q", requirements=[requirement])
+
+    def model(_messages):
+        return {"items": [{
+            "requirement_id": "r1", "source_id": "S1", "entity": "Norway",
+            "predicate": "population", "value": "5425000", "qualifiers": {},
+        }]}
+
+    chunk = {
+        "segment_id": "row-1", "text": "Norway | 5425000", "context_text": "HEADER: Country | Population",
+        "source_url": "https://example.test", "source_title": "Population table",
+        "extraction_type": "table", "provenance": {"columns": ["Country", "Population"]},
+    }
+    verified, _, _ = deep_research._extract_and_verify_batch(
+        [requirement], {"r1": [chunk]}, iteration=1, model_json=model,
+        entailment_backend="heuristic", entailment_model=None, state=state, max_context_chars=4000,
+    )
+    assert len(verified) == 1
+    assert state.diagnostics["evidence_rejections"] == {}
+
+
+def test_conflicting_period_is_still_rejected():
+    requirement = deep_research.ResearchRequirement(
+        id="r1", text="absent members", subject="Committee", metric="absent", period="September 2021",
+        predicate="absent", qualifiers={"period": "September 2021"},
+    )
+    state = deep_research.ResearchState(query="q", requirements=[requirement])
+
+    def model(_messages):
+        return {"items": [{
+            "requirement_id": "r1", "source_id": "S1", "entity": "Paula Fletcher",
+            "predicate": "absent", "value": "Absent", "qualifiers": {},
+        }]}
+
+    chunk = {
+        "segment_id": "row-1", "text": "Paula Fletcher | Absent",
+        "context_text": "Minutes of the October 2021 meeting", "source_url": "https://example.test",
+        "source_title": "Committee minutes", "extraction_type": "table", "provenance": {},
+    }
+    verified, _, _ = deep_research._extract_and_verify_batch(
+        [requirement], {"r1": [chunk]}, iteration=1, model_json=model,
+        entailment_backend="heuristic", entailment_model=None, state=state, max_context_chars=4000,
+    )
+    assert verified == []
+    assert state.diagnostics["evidence_rejections"] == {"required_period_conflicts_with_document": 1}
+
+
 def test_fetch_pool_returns_at_deadline_without_waiting_for_worker():
     import time
 
@@ -587,3 +770,22 @@ def test_fetch_pool_returns_at_deadline_without_waiting_for_worker():
     )
     assert result == []
     assert time.monotonic() - started < 0.2
+
+
+def test_single_answer_question_never_gets_a_set_operation_plan(monkeypatch):
+    question = "Which treaty did the state sign that did not include a defence clause?"
+    assert deep_research._aggregation_plan(question)["operation"] == "set_difference"
+
+    def fake_decompose(query, model_json=None):
+        return [deep_research.ResearchRequirement(id="r1", text="treaty")], "single", ""
+
+    def fake_discover(*args, **kwargs):
+        return [], [], {}
+
+    monkeypatch.setattr(deep_research, "decompose_requirements", fake_decompose)
+
+    result = deep_research.run_deep_research(
+        question, discover=fake_discover, model_json=None,
+        budget=deep_research.ResearchBudget(max_iterations=1),
+    )
+    assert result["state"]["aggregation_plan"] == {}
