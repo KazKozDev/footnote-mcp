@@ -43,6 +43,12 @@ dependencies = [
     "holidays>=0.60",
 ]
 
+[project.optional-dependencies]
+benchmark = [
+    "huggingface-hub>=0.30",
+    "pyarrow>=18,<22",
+]
+
 [project.scripts]
 footnote-mcp = "footnote_mcp:cli"
 

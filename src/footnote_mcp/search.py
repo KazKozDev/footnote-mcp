@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import os
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, quote, quote_plus, unquote, urlencode, urlparse
 
@@ -22,6 +24,46 @@ _GENERIC_SEARCH_TERMS = {
     "programming", "protocol", "search", "today", "tutorial", "weather",
     "документация", "официальный", "официальная", "поиск", "погода", "сегодня",
 }
+
+_PROVIDER_COOLDOWN_UNTIL: dict[str, float] = {}
+_PROVIDER_COOLDOWN_LOCK = threading.Lock()
+_PROVIDER_COOLDOWN_DEFAULTS = {"brave": 300.0, "ddg": 120.0}
+
+
+def _provider_cooldown_seconds(engine, response=None):
+    """Return a bounded rate-limit cooldown, honoring Retry-After when present."""
+    env_name = f"FOOTNOTE_{engine.upper()}_COOLDOWN_SECONDS"
+    try:
+        seconds = max(0.0, float(os.getenv(env_name, _PROVIDER_COOLDOWN_DEFAULTS[engine])))
+    except (TypeError, ValueError):
+        seconds = _PROVIDER_COOLDOWN_DEFAULTS[engine]
+    headers = getattr(response, "headers", {}) or {}
+    try:
+        seconds = max(seconds, float(headers.get("Retry-After", 0)))
+    except (TypeError, ValueError):
+        pass
+    return min(seconds, 3600.0)
+
+
+def _start_provider_cooldown(engine, response=None):
+    seconds = _provider_cooldown_seconds(engine, response)
+    if seconds <= 0:
+        return
+    until = time.monotonic() + seconds
+    with _PROVIDER_COOLDOWN_LOCK:
+        _PROVIDER_COOLDOWN_UNTIL[engine] = max(_PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0), until)
+    log.warning("[%s] Rate limited; cooling down for %.0fs", engine.upper(), seconds)
+
+
+def _provider_on_cooldown(engine):
+    with _PROVIDER_COOLDOWN_LOCK:
+        until = _PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0)
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            _PROVIDER_COOLDOWN_UNTIL.pop(engine, None)
+            return False
+    log.debug("[%s] Cooldown active; skipping request for %.0fs", engine.upper(), remaining)
+    return True
 
 
 def _search_terms(text):
@@ -226,6 +268,9 @@ def search_ddg(query, num=None, lang="en", debug=False, df=""):
     if num is None:
         num = core.NUM_PER_ENGINE
 
+    if _provider_on_cooldown("ddg"):
+        return []
+
     # df = DuckDuckGo freshness filter: d (day), w (week), m (month), y (year).
     url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
     if df in ("d", "w", "m", "y"):
@@ -245,6 +290,9 @@ def search_ddg(query, num=None, lang="en", debug=False, df=""):
             handle.write(resp.text)
         log.debug("[DDG] Status %s, %s bytes -> debug_ddg.html", resp.status_code, len(resp.text))
 
+    if resp.status_code in (202, 429):
+        _start_provider_cooldown("ddg", resp)
+        return []
     if resp.status_code != 200:
         log.warning("[DDG] HTTP %s", resp.status_code)
         return []
@@ -302,6 +350,9 @@ def search_brave_scrape(query, num=None, lang="en", debug=False):
     if num is None:
         num = core.NUM_PER_ENGINE
 
+    if _provider_on_cooldown("brave"):
+        return []
+
     url = f"https://search.brave.com/search?{urlencode({'q': query, 'source': 'web', 'spellcheck': '0'})}"
     if debug:
         log.debug("[BRAVE] %s", url)
@@ -317,6 +368,9 @@ def search_brave_scrape(query, num=None, lang="en", debug=False):
             handle.write(resp.text)
         log.debug("[BRAVE] Status %s, %s bytes -> debug_brave.html", resp.status_code, len(resp.text))
 
+    if resp.status_code == 429:
+        _start_provider_cooldown("brave", resp)
+        return []
     if resp.status_code != 200:
         log.warning("[BRAVE] HTTP %s", resp.status_code)
         return []
@@ -704,9 +758,11 @@ _DIRECT_PROVIDERS = {
 def _provider_order(provider):
     """Decide which keyed providers to try, in priority order.
 
-    auto: configured SearXNG, then every provider that has its key set.
+    auto / auto+marginalia: configured SearXNG, then every provider that has its key set.
     A specific name forces just that provider. 'scrape' skips configured providers.
-    Zero-key Bing/DDG/Brave/Wiby/Marginalia discovery is always the final fallback.
+    Zero-key Bing/DDG/Brave/Wiby discovery is always the final fallback.
+    Marginalia remains available only as an explicit provider because its shared
+    public endpoint can be too slow for the default latency-sensitive path.
     """
     provider = (provider or "auto").lower()
     keyed = {
@@ -756,17 +812,22 @@ def search(query, num=20, lang="en", debug=False, provider="auto"):
         except Exception as exc:
             log.warning("[SEARCH] provider %s failed: %s", name, exc)
 
-    # 2. Fallback: query all zero-key discovery sources in parallel and merge.
-    scraped = {"bing": [], "ddg": [], "brave": [], "wiby": [], "marginalia": []}
+    # 2. Fallback: query the latency-bounded zero-key sources in parallel and merge.
+    # The opt-in auto+marginalia mode adds the slower shared Marginalia endpoint
+    # without changing the latency contract of the default auto mode.
+    scraped = {"bing": [], "ddg": [], "brave": [], "wiby": []}
+    if requested_provider == "auto+marginalia":
+        scraped["marginalia"] = []
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=len(scraped)) as pool:
         futures = {
             pool.submit(search_bing, query, core.NUM_PER_ENGINE, lang, debug): "bing",
             pool.submit(search_ddg, query, core.NUM_PER_ENGINE, lang, debug): "ddg",
             pool.submit(search_brave_scrape, query, core.NUM_PER_ENGINE, lang, debug): "brave",
             pool.submit(search_wiby, query, core.NUM_PER_ENGINE, lang, debug): "wiby",
-            pool.submit(search_marginalia, query, core.NUM_PER_ENGINE, lang, debug): "marginalia",
         }
+        if "marginalia" in scraped:
+            futures[pool.submit(search_marginalia, query, core.NUM_PER_ENGINE, lang, debug)] = "marginalia"
         for future in as_completed(futures):
             engine = futures[future]
             try:
@@ -774,11 +835,8 @@ def search(query, num=20, lang="en", debug=False, provider="auto"):
             except Exception as exc:
                 log.warning("[%s] Error: %s", engine.upper(), exc)
 
-    log.info(
-        "[MERGE] Bing: %s, DDG: %s, Brave: %s, Wiby: %s, Marginalia: %s; merging",
-        len(scraped["bing"]), len(scraped["ddg"]), len(scraped["brave"]),
-        len(scraped["wiby"]), len(scraped["marginalia"]),
-    )
+    counts = ", ".join(f"{name.title()}: {len(results)}" for name, results in scraped.items())
+    log.info("[MERGE] %s; merging", counts)
     combined = dict(direct_results)
     for name, results in scraped.items():
         combined[name] = _prepare_source_results(query, combined.get(name, []) + results, name)

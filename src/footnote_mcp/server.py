@@ -73,7 +73,11 @@ SYNC_TOOLS: dict[str, ToolSpec] = {
     "web_deep_search": (
         "web_deep_search",
         ("query",),
-        {"lang": "en", "sources": [], "provider": "auto", "num": 20},
+        {
+            "lang": "en", "sources": [], "provider": "auto", "num": 20,
+            "model": None, "max_iterations": 4, "max_fetch": None,
+            "entailment_backend": "heuristic",
+        },
     ),
     "web_read": ("web_read", ("url",), {"lang": "en", "use_cache": True}),
     "web_extract_tables": (
@@ -192,14 +196,14 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="web_search",
-            description="General web discovery. Uses configured SearXNG first, then keyed providers, then zero-key Bing, DuckDuckGo, Brave, Wiby, and Marginalia. Returns normalized titles, URLs, snippets and scores.",
+            description="General web discovery. Uses configured providers plus zero-key Bing, DuckDuckGo, Brave, and Wiby. Marginalia is opt-in through auto+marginalia. Returns normalized titles, URLs, snippets and scores.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "lang": {"type": "string", "description": "Language code: en, ru, etc.", "default": "en"},
                     "num": {"type": "integer", "description": "Max results to return", "default": 10},
-                    "provider": {"type": "string", "description": "auto | searxng | tavily | brave | google | wiby | marginalia | scrape", "default": "auto"},
+                    "provider": {"type": "string", "description": "auto | auto+marginalia | searxng | tavily | brave | google | wiby | marginalia | scrape", "default": "auto"},
                     "semantic": {"type": "boolean", "description": "Rerank results by meaning using local bge-m3 embeddings", "default": False},
                 },
                 "required": ["query"],
@@ -207,7 +211,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="web_deep_search",
-            description="Intent-routed deep research: discover through web/papers/encyclopedia/GitHub/archive sources, then fetch, extract, rerank, and return source-grounded context.",
+            description="Iterative evidence-led deep research: decompose requirements, search unresolved gaps, extract text/tables/files, verify each fact, and return a diagnostic funnel plus source-grounded context.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -221,10 +225,14 @@ async def list_tools() -> list[Tool]:
                     },
                     "provider": {
                         "type": "string",
-                        "description": "Web provider: auto | searxng | tavily | brave | google | wiby | marginalia | scrape",
+                        "description": "Web provider: auto | auto+marginalia | searxng | tavily | brave | google | wiby | marginalia | scrape",
                         "default": "auto",
                     },
                     "num": {"type": "integer", "description": "Maximum discovery results before fetching", "default": 20},
+                    "model": {"type": ["string", "null"], "description": "Ollama model for requirement planning and evidence extraction; otherwise FOOTNOTE_RESEARCH_MODEL/OLLAMA_MODEL", "default": None},
+                    "max_iterations": {"type": "integer", "description": "Maximum gap-driven research iterations", "default": 4},
+                    "max_fetch": {"type": ["integer", "null"], "description": "Adaptive total page/file fetch budget; defaults to num", "default": None},
+                    "entailment_backend": {"type": "string", "description": "heuristic | auto | ollama | local_nli", "default": "heuristic"},
                 },
                 "required": ["query"],
             },

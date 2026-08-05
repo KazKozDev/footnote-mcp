@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import time
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -15,9 +16,20 @@ from ..fetch import _get, fetch_page
 from .cache import _read_cache, _write_cache
 
 
-def _fetch_bytes(url: str, lang: str = "en", timeout: int = 20) -> tuple[bytes | None, str, str | None]:
+def _remaining_timeout(timeout: float, deadline: float | None) -> float:
+    if deadline is None:
+        return max(0.1, timeout)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("file parsing deadline exhausted")
+    return max(0.1, min(timeout, remaining))
+
+
+def _fetch_bytes(
+    url: str, lang: str = "en", timeout: float = 20, deadline: float | None = None,
+) -> tuple[bytes | None, str, str | None]:
     try:
-        resp = _get(url, lang=lang, timeout=timeout, max_retries=1)
+        resp = _get(url, lang=lang, timeout=_remaining_timeout(timeout, deadline), max_retries=1)
         content_type = resp.headers.get("content-type", "")
         if resp.status_code != 200:
             return None, content_type, f"HTTP {resp.status_code}"
@@ -71,9 +83,12 @@ def web_extract_tables(url: str, lang: str = "en", max_tables: int = 8, max_rows
     tables = []
     for idx, table in enumerate(soup.find_all("table")[:max_tables], 1):
         parsed = _table_to_rows(table)
+        total_rows = len(parsed["rows"])
         parsed["table_index"] = idx
         parsed["rows"] = parsed["rows"][:max_rows]
         parsed["row_count"] = len(parsed["rows"])
+        parsed["total_row_count"] = total_rows
+        parsed["truncated"] = total_rows > len(parsed["rows"])
         tables.append(parsed)
 
     result = {
@@ -117,9 +132,11 @@ def _parse_csv_bytes(data: bytes, max_rows: int) -> dict:
     rows = []
     for row in reader:
         rows.append(dict(row))
-        if len(rows) >= max_rows:
+        if len(rows) > max_rows:
             break
-    return {"tables": [{"table_index": 1, "columns": reader.fieldnames or [], "rows": rows, "row_count": len(rows)}]}
+    truncated = len(rows) > max_rows
+    rows = rows[:max_rows]
+    return {"tables": [{"table_index": 1, "columns": reader.fieldnames or [], "rows": rows, "row_count": len(rows), "truncated": truncated}]}
 
 
 def _parse_xlsx_bytes(data: bytes, max_rows: int) -> dict:
@@ -140,9 +157,11 @@ def _parse_xlsx_bytes(data: bytes, max_rows: int) -> dict:
         rows = []
         for values in rows_iter:
             rows.append({columns[idx]: values[idx] if idx < len(values) else None for idx in range(len(columns))})
-            if len(rows) >= max_rows:
+            if len(rows) > max_rows:
                 break
-        tables.append({"table_index": sheet_index, "sheet": sheet.title, "columns": columns, "rows": rows, "row_count": len(rows)})
+        truncated = len(rows) > max_rows
+        rows = rows[:max_rows]
+        tables.append({"table_index": sheet_index, "sheet": sheet.title, "columns": columns, "rows": rows, "row_count": len(rows), "truncated": truncated})
     return {"tables": tables}
 
 
@@ -171,6 +190,7 @@ def _parse_xls_bytes(data: bytes, max_rows: int) -> dict:
                 "columns": columns,
                 "rows": rows,
                 "row_count": len(rows),
+                "truncated": sheet.nrows > max_rows + 1,
             }
         )
     return {"tables": tables}
@@ -196,7 +216,7 @@ def _tesseract_lang(lang: str) -> str:
     return code if code == "eng" else f"{code}+eng"
 
 
-def _parse_pdf_bytes(data: bytes, max_rows: int, lang: str = "en") -> dict:
+def _parse_pdf_bytes(data: bytes, max_rows: int, lang: str = "en", deadline: float | None = None) -> dict:
     try:
         import pdfplumber
 
@@ -204,6 +224,7 @@ def _parse_pdf_bytes(data: bytes, max_rows: int, lang: str = "en") -> dict:
         pages = []
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             for page_index, page in enumerate(pdf.pages[:10], 1):
+                _remaining_timeout(30.0, deadline)
                 text = page.extract_text() or ""
                 pages.append({"page": page_index, "text": text[:4000]})
                 for raw_table in page.extract_tables() or []:
@@ -222,10 +243,11 @@ def _parse_pdf_bytes(data: bytes, max_rows: int, lang: str = "en") -> dict:
                             "columns": columns,
                             "rows": rows,
                             "row_count": len(rows),
+                            "truncated": len(raw_table) > max_rows + 1,
                         }
                     )
         if not any(page.get("text") for page in pages):
-            ocr = _ocr_pdf_bytes(data, max_pages=8, lang=lang)
+            ocr = _ocr_pdf_bytes(data, max_pages=8, lang=lang, deadline=deadline)
             if ocr.get("pages"):
                 pages = ocr["pages"]
         return {"pages": pages, "page_count": len(pages), "tables": tables}
@@ -241,13 +263,14 @@ def _parse_pdf_bytes(data: bytes, max_rows: int, lang: str = "en") -> dict:
     pages = []
     rows = []
     for idx, page in enumerate(reader.pages[:10], 1):
+        _remaining_timeout(30.0, deadline)
         text = page.extract_text() or ""
         pages.append({"page": idx, "text": text[:4000]})
         for line_number, line in enumerate(text.splitlines()[:max_rows], 1):
             if line.strip():
                 rows.append({"page": idx, "line_number": line_number, "text": line.strip()})
     if not any(page.get("text") for page in pages):
-        ocr = _ocr_pdf_bytes(data, max_pages=8, lang=lang)
+        ocr = _ocr_pdf_bytes(data, max_pages=8, lang=lang, deadline=deadline)
         if ocr.get("pages"):
             pages = ocr["pages"]
             rows = []
@@ -270,7 +293,7 @@ def _parse_pdf_bytes(data: bytes, max_rows: int, lang: str = "en") -> dict:
     }
 
 
-def _ocr_pdf_bytes(data: bytes, max_pages: int = 8, lang: str = "en") -> dict:
+def _ocr_pdf_bytes(data: bytes, max_pages: int = 8, lang: str = "en", deadline: float | None = None) -> dict:
     try:
         import pdfplumber
         import pytesseract
@@ -281,20 +304,29 @@ def _ocr_pdf_bytes(data: bytes, max_pages: int = 8, lang: str = "en") -> dict:
     try:
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             for page_index, page in enumerate(pdf.pages[:max_pages], 1):
+                timeout = _remaining_timeout(20.0, deadline)
                 image = page.to_image(resolution=200).original
-                text = pytesseract.image_to_string(image, lang=_tesseract_lang(lang)) or ""
+                text = pytesseract.image_to_string(
+                    image, lang=_tesseract_lang(lang), timeout=max(1, int(timeout)),
+                ) or ""
                 pages.append({"page": page_index, "text": text[:4000], "extraction": "ocr"})
         return {"ocr_available": True, "pages": pages}
     except Exception as exc:
         return {"ocr_available": False, "pages": [], "reason": str(exc)}
 
 
-def web_parse_file(url: str, lang: str = "en", max_rows: int = 200, use_cache: bool = True) -> dict:
+def web_parse_file(
+    url: str, lang: str = "en", max_rows: int = 200, use_cache: bool = True,
+    deadline: float | None = None, timeout: float = 35.0,
+) -> dict:
     cached = _read_cache(url) if use_cache else None
     if cached and cached.get("parsed_file"):
         return {"url": url, "cached": True, **cached["parsed_file"]}
 
-    data, content_type, error = _fetch_bytes(url, lang=lang)
+    if deadline is None:
+        data, content_type, error = _fetch_bytes(url, lang=lang, timeout=timeout)
+    else:
+        data, content_type, error = _fetch_bytes(url, lang=lang, timeout=timeout, deadline=deadline)
     if error or data is None:
         return {"url": url, "error": error or "Download failed", "content_type": content_type}
 
@@ -309,10 +341,13 @@ def web_parse_file(url: str, lang: str = "en", max_rows: int = 200, use_cache: b
         parsed = _parse_xls_bytes(data, max_rows=max_rows)
         file_type = "xls"
     elif path.endswith(".pdf") or "pdf" in content_type:
-        parsed = _parse_pdf_bytes(data, max_rows=max_rows, lang=lang)
+        parsed = _parse_pdf_bytes(data, max_rows=max_rows, lang=lang, deadline=deadline)
         file_type = "pdf"
     elif path.endswith(".json") or "json" in content_type:
-        parsed = {"json": json.loads(data.decode("utf-8", errors="replace"))}
+        try:
+            parsed = {"json": json.loads(data.decode("utf-8-sig", errors="replace"))}
+        except json.JSONDecodeError as exc:
+            parsed = {"error": f"Invalid JSON: {exc}"}
         file_type = "json"
     else:
         parsed = {"error": f"Unsupported or unknown file type: {content_type or path}"}

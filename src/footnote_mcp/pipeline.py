@@ -6,7 +6,7 @@ from .diagnostics import log
 def search_extract_rerank(query, num_fetch=None, lang="en", debug=False, provider="auto", search_results=None):
     """
     Full pipeline:
-      1. Search Bing+DDG+Brave+Wiby+Marginalia → merge
+      1. Search Bing+DDG+Brave+Wiby → merge
       2. Take top N results
       3. Parallel fetch + extraction
       4. Chunk extracted text

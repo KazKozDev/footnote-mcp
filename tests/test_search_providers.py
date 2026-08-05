@@ -6,9 +6,10 @@ from footnote_mcp import search
 
 
 class FakeResp:
-    def __init__(self, status_code=200, payload=None):
+    def __init__(self, status_code=200, payload=None, headers=None):
         self.status_code = status_code
         self._payload = payload or {}
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -16,6 +17,7 @@ class FakeResp:
 
 @pytest.fixture(autouse=True)
 def clear_keys(monkeypatch):
+    search._PROVIDER_COOLDOWN_UNTIL.clear()
     for var in (
         "FOOTNOTE_SEARXNG_URL",
         "SEARXNG_URL",
@@ -225,6 +227,37 @@ def test_search_brave_scrape_handles_http_error(monkeypatch):
     assert search.search_brave_scrape("q") == []
 
 
+def test_search_brave_scrape_cools_down_after_rate_limit(monkeypatch):
+    calls = []
+
+    def fake_get(*args, **kwargs):
+        calls.append(args[0])
+        return FakeResp(429, headers={"Retry-After": "30"})
+
+    monkeypatch.setenv("FOOTNOTE_BRAVE_COOLDOWN_SECONDS", "10")
+    monkeypatch.setattr(search, "_get", fake_get)
+
+    assert search.search_brave_scrape("first") == []
+    assert search.search_brave_scrape("second") == []
+    assert len(calls) == 1
+    assert search._PROVIDER_COOLDOWN_UNTIL["brave"] > search.time.monotonic()
+
+
+def test_search_ddg_cools_down_after_http_202(monkeypatch):
+    calls = []
+
+    def fake_get(*args, **kwargs):
+        calls.append(args[0])
+        return FakeResp(202)
+
+    monkeypatch.setenv("FOOTNOTE_DDG_COOLDOWN_SECONDS", "10")
+    monkeypatch.setattr(search, "_get", fake_get)
+
+    assert search.search_ddg("first") == []
+    assert search.search_ddg("second") == []
+    assert len(calls) == 1
+
+
 def test_search_brave_scrape_respects_num(monkeypatch):
     monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp(BRAVE_HTML))
     assert len(search.search_brave_scrape("q", num=1)) == 1
@@ -381,10 +414,34 @@ def test_search_scrape_when_no_keys(monkeypatch):
     monkeypatch.setattr(search, "search_ddg", lambda *a, **k: [{"title": "Dg", "url": "https://ddg.com/y", "snippet": ""}])
     monkeypatch.setattr(search, "search_brave_scrape", lambda *a, **k: [{"title": "Br", "url": "https://brave-hit.com/z", "snippet": ""}])
     monkeypatch.setattr(search, "search_wiby", lambda *a, **k: [{"title": "Wi", "url": "https://wiby-hit.com/w", "snippet": "", "attribution": "https://wiby.me/"}])
-    monkeypatch.setattr(search, "search_marginalia", lambda *a, **k: [{"title": "Ma", "url": "https://marginalia-hit.com/m", "snippet": "", "license": "CC-BY-NC-SA 4.0"}])
+    monkeypatch.setattr(search, "search_marginalia", lambda *a, **k: pytest.fail("marginalia must be explicit-only"))
     out = search.search("q", num=5)
     urls = {r["url"] for r in out}
     assert {
         "https://bing.com/x", "https://ddg.com/y", "https://brave-hit.com/z",
-        "https://wiby-hit.com/w", "https://marginalia-hit.com/m",
+        "https://wiby-hit.com/w",
     } <= urls
+
+
+def test_search_auto_marginalia_merges_opt_in_provider(monkeypatch):
+    monkeypatch.setattr(search, "search_bing", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_ddg", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_brave_scrape", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_wiby", lambda *a, **k: [])
+    monkeypatch.setattr(
+        search,
+        "search_marginalia",
+        lambda *a, **k: [{
+            "title": "Marginalia result",
+            "url": "https://marginalia-hit.example/q",
+            "snippet": "query result",
+            "license": "CC-BY-NC-SA 4.0",
+            "attribution": "https://search.marginalia.nu/",
+        }],
+    )
+
+    out = search.search("query", num=5, provider="auto+marginalia")
+
+    assert [item["url"] for item in out] == ["https://marginalia-hit.example/q"]
+    assert out[0]["engines"] == ["marginalia"]
+    assert out[0]["licenses"] == ["CC-BY-NC-SA 4.0"]

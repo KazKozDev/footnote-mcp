@@ -164,8 +164,10 @@ def _has_factual_data(text):
 
 
 def _cross_encoder_rerank(query, chunks, top_k, lang="en"):
+    if len(chunks) <= top_k:
+        return chunks
     model = _get_cross_encoder_model(lang)
-    if not model or len(chunks) <= top_k:
+    if not model:
         return chunks
     try:
         scores = model.predict([[query, chunk["text"]] for chunk in chunks])

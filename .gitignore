@@ -14,3 +14,6 @@ debug_ddg.html
 *.egg-info/
 build/
 dist/
+
+# Local benchmark outputs may contain model predictions for encrypted eval sets.
+benchmarks/results/

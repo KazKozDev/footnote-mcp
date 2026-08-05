@@ -31,38 +31,29 @@ def test_web_search_formats_results(monkeypatch):
 def test_web_deep_search_formats_sources(monkeypatch):
     monkeypatch.setattr(
         tools_search,
-        "discover_sources",
-        lambda query, lang="en", requested=None, provider="auto", num=20: (
-            [{"title": "Title", "url": "https://example.com", "snippet": "s", "score": 1.0, "engines": ["web"]}],
-            ["web"],
-            {},
-        ),
+        "ollama_json_call",
+        lambda model: "model-json",
     )
     monkeypatch.setattr(
         tools_search,
-        "search_extract_rerank",
-        lambda query, lang="en", provider="auto", search_results=None: (
-            ["chunk"],
-            [{"url": "https://example.com"}],
-            {"https://example.com"},
-        ),
-    )
-    monkeypatch.setattr(
-        tools_search,
-        "build_llm_context",
-        lambda ranked, results, fetched_urls=None: (
-            "context",
-            {0: 7},
-            {0: {"title": "Title", "url": "https://example.com", "chunks": ["a", "b"]}},
-        ),
+        "run_deep_research",
+        lambda query, **kwargs: {
+            "context": "context",
+            "sources": [{"title": "Title", "url": "https://example.com"}],
+            "context_length": 7,
+            "source_count": 1,
+            "answer_ready": True,
+            "state": {"coverage": 1.0},
+        },
     )
 
-    result = tools_search.web_deep_search("query")
+    result = tools_search.web_deep_search("query", model="m", max_iterations=3, max_fetch=12)
 
     assert result["context"] == "context"
     assert result["source_count"] == 1
-    assert result["sources"] == [{"num": 7, "title": "Title", "url": "https://example.com", "chunks": 2}]
-    assert result["routed_sources"] == ["web"]
+    assert result["sources"] == [{"title": "Title", "url": "https://example.com"}]
+    assert result["answer_ready"] is True
+    assert result["model"] == "m"
 
 
 def test_select_discovery_sources_routes_by_intent():
@@ -74,6 +65,29 @@ def test_select_discovery_sources_routes_by_intent():
     assert tools_search.select_discovery_sources("Find DOI papers about retrieval") == ["web", "papers"]
     assert tools_search.select_discovery_sources("archive https://example.com old version") == ["web", "archive"]
     assert tools_search.select_discovery_sources("anything", ["github", "papers"]) == ["github", "papers"]
+
+
+def test_discover_sources_keeps_direct_url_without_search_result(monkeypatch):
+    monkeypatch.setattr(
+        tools_search,
+        "web_search",
+        lambda *args, **kwargs: {"results": [], "count": 0},
+    )
+
+    results, routed, errors = tools_search.discover_sources(
+        "Read https://example.gov/report and identify the value",
+        num=5,
+    )
+
+    assert routed == ["web"]
+    assert errors == {}
+    assert results == [{
+        "title": "https://example.gov/report",
+        "url": "https://example.gov/report",
+        "snippet": "Direct source supplied in the research query.",
+        "score": 1.0,
+        "engines": ["direct"],
+    }]
 
 
 def test_web_read_fetches_extracts_classifies_and_caches(monkeypatch):

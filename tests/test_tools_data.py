@@ -125,6 +125,11 @@ def test_web_parse_file_reports_download_and_unknown_type(monkeypatch, tmp_path)
     assert result["file_type"] == "unknown"
     assert "Unsupported" in result["error"]
 
+    monkeypatch.setattr(files, "_fetch_bytes", lambda url, lang="en", timeout=20: (b"not-json", "application/json", None))
+    invalid_json = tools_data.web_parse_file("https://example.com/file.json", use_cache=False)
+    assert invalid_json["file_type"] == "json"
+    assert invalid_json["error"].startswith("Invalid JSON:")
+
 
 def test_web_fetch_json_parses_errors_and_caches(monkeypatch, tmp_path):
     _patch_cache_dir(monkeypatch, tmp_path)

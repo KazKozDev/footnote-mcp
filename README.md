@@ -99,7 +99,7 @@ the JSON and redeploy; the other keys keep working. Limits are held in memory,
 which is appropriate for this one-instance Free service and reset on restart.
 
 No API keys are required to start — search falls back to zero-key Bing, DuckDuckGo, Brave,
-Wiby, and Marginalia discovery. Add
+and Wiby discovery. Add
 keys later under `"env"` (see [Search backends](#search-backends)). Pass `--headed` to watch
 the browser tier work.
 
@@ -157,9 +157,9 @@ machine.
 
 | Tool | Description |
 |------|-------------|
-| `web_search` | Configured SearXNG first, then keyed providers, then zero-key Bing, DuckDuckGo, Brave, Wiby, and Marginalia. Snippets are discovery only. |
+| `web_search` | Configured providers plus zero-key Bing, DuckDuckGo, Brave, and Wiby; Marginalia is explicit-only. Snippets are discovery only. |
 | `web_search_recent` | Search restricted to a recency window (day/week/month/year). |
-| `web_deep_search` | Automatically route across web/papers/encyclopedia/GitHub/archive sources, then fetch, extract, rerank, and return source context. |
+| `web_deep_search` | Iteratively close evidence gaps across web/papers/encyclopedia/GitHub/archive sources; extracts tables/files, verifies individual facts, and returns an evidence ledger plus diagnostic funnel. |
 | `web_read` | Fetch one URL, extract text, classify source quality, persist cache metadata. |
 | `papers_search` | Search Crossref and arXiv through one normalized, zero-key paper contract. |
 | `encyclopedia_search` | Search Wikipedia/Wikidata entities or run read-only Wikidata SPARQL. |
@@ -236,8 +236,8 @@ A controlled Chromium session for JS-heavy or interactive pages:
 ## Search backends
 
 `web_search` routes through a provider layer. A configured zero-key SearXNG instance is tried
-first, followed by keyed providers and finally zero-key Bing, DuckDuckGo, Brave, Wiby, and
-Marginalia. Results are
+first, followed by keyed providers and finally zero-key Bing, DuckDuckGo, Brave, and Wiby.
+Marginalia remains available as an explicit provider. Results are
 normalized to one shape regardless of backend. Every provider is relevance-filtered and
 deduplicated before cross-provider merging; repeated URLs from the same provider do not receive
 an agreement bonus.
@@ -252,9 +252,13 @@ an agreement bonus.
 | Wiby | none | Public JSON endpoint; result metadata includes required Wiby attribution. |
 | Marginalia | none | Shared public API; result metadata preserves its `CC-BY-NC-SA 4.0` license. |
 
-`auto` (default) queries every configured provider plus every zero-key fallback and merges the
-complete result set. Force one isolated backend with the `provider` argument
-(`searxng`/`tavily`/`brave`/`google`/`wiby`/`marginalia`/`scrape`).
+`auto` (default) queries every configured provider plus the latency-bounded zero-key fallbacks
+and merges the complete result set. Marginalia is excluded from `auto` because its shared public
+endpoint can be slow; use `provider="auto+marginalia"` to include it in the merged search, or
+`provider="marginalia"` to isolate it. Force one isolated backend with the `provider` argument
+(`searxng`/`tavily`/`brave`/`google`/`wiby`/`marginalia`/`scrape`). Brave and DuckDuckGo enter a
+temporary cooldown after rate limiting; override the defaults with
+`FOOTNOTE_BRAVE_COOLDOWN_SECONDS` and `FOOTNOTE_DDG_COOLDOWN_SECONDS`.
 
 ### Specialized zero-key discovery
 
@@ -271,6 +275,15 @@ All four return `title`, `url`, `snippet`, `published`, `authors`, `source`, and
 `source_type` where those fields apply. `web_deep_search` accepts an optional `sources`
 array (`web`, `papers`, `encyclopedia`, `github`, `archive`). With an empty array it always
 uses general web discovery and adds specialized sources when the query signals their intent.
+
+`web_deep_search` is a separate, slower research loop. Set `model` (or
+`FOOTNOTE_RESEARCH_MODEL`) to enable requirement decomposition, gap-specific query planning,
+and strict fact extraction. It maintains a serializable research state and evidence ledger,
+expands fetch/chunk budgets across iterations, parses HTML tables and linked CSV/XLS/XLSX/PDF/JSON
+files, and verifies `subject`, `metric`, `period`, `value`, and `unit` against an exact source
+quote before admitting an item. The result includes `answer_ready`, unresolved requirements,
+per-iteration diagnostics, and the cumulative funnel
+`candidates → deduplicated_documents → relevant_documents → successful_fetches → extracted_facts → verified_evidence`.
 
 **Semantic reranking.** Pass `semantic: true` to `web_search` to reorder by meaning rather
 than keyword overlap: it over-fetches, embeds query and results with a local ollama model,

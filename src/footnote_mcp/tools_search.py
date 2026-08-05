@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 from . import core
 from bs4 import BeautifulSoup
 from .search import search
-from .pipeline import search_extract_rerank, build_llm_context
 from .fetch import fetch_page
 from .extract import extract_content
 from .scraper import fetch as scrape_fetch
@@ -14,12 +13,14 @@ from .semantic import semantic_rerank
 from . import sources as specialized_sources
 from .tools_data.classify import classify_source
 from .tools_data.cache import _read_cache, _write_cache
+from .deep_research import ResearchBudget, ollama_json_call, run_deep_research
 
 
 def web_search(query: str, lang: str = "en", num: int = 10, provider: str = "auto", semantic: bool = False) -> dict:
-    """Search via configured providers, else zero-key Bing/DDG/Brave/Wiby/Marginalia.
+    """Search via configured providers plus zero-key Bing/DDG/Brave/Wiby.
 
-    ``provider``: auto | searxng | tavily | brave | google | wiby | marginalia | scrape. Results are merged into a
+    Marginalia is opt-in. ``provider``: auto | auto+marginalia | searxng | tavily | brave |
+    google | wiby | marginalia | scrape. Results are merged into a
     single shape regardless of backend.
     ``semantic``: rerank results by meaning using local bge-m3 embeddings (best-effort;
     over-fetches candidates, reorders by query similarity, then trims to ``num``).
@@ -75,7 +76,13 @@ _ARCHIVE_HINTS = {
 
 def _contains_hint(query: str, hints: set[str]) -> bool:
     lowered = query.lower()
-    return any(hint in lowered for hint in hints)
+    for hint in hints:
+        if hint.isascii() and re.fullmatch(r"[a-z0-9_]+", hint):
+            if re.search(rf"\b{re.escape(hint)}\b", lowered):
+                return True
+        elif hint in lowered:
+            return True
+    return False
 
 
 def _query_url(query: str) -> str:
@@ -156,6 +163,17 @@ def discover_sources(
     merged = []
     seen = set()
     errors = {}
+    direct_url = _query_url(query)
+    if direct_url:
+        normalized_url = direct_url if direct_url.startswith("http") else f"https://{direct_url}"
+        merged.append({
+            "title": normalized_url,
+            "url": normalized_url,
+            "snippet": "Direct source supplied in the research query.",
+            "score": 1.0,
+            "engines": ["direct"],
+        })
+        seen.add(normalized_url.split("#", 1)[0].rstrip("/").lower())
     for source_name in routed:
         response = responses[source_name]
         if response.get("error"):
@@ -188,44 +206,31 @@ def web_deep_search(
     sources: list[str] | None = None,
     provider: str = "auto",
     num: int = 20,
+    model: str | None = None,
+    max_iterations: int = 4,
+    max_fetch: int | None = None,
+    entailment_backend: str = "heuristic",
 ) -> dict:
-    """Route discovery by intent, then fetch, extract, rerank, and build context."""
-    discovery, routed_sources, discovery_errors = discover_sources(
-        query,
-        lang=lang,
-        requested=sources,
-        provider=provider,
-        num=num,
+    """Run iterative gap-driven research and return only verified evidence context."""
+    fetch_limit = max(8, max_fetch if max_fetch is not None else num)
+    budget = ResearchBudget(
+        max_iterations=max(1, max_iterations),
+        initial_fetch=min(8, fetch_limit),
+        max_fetch=fetch_limit,
     )
-    ranked_chunks, search_results, fetched_urls = search_extract_rerank(
+    result = run_deep_research(
         query,
+        discover=discover_sources,
         lang=lang,
+        requested_sources=sources,
         provider=provider,
-        search_results=discovery,
+        model_json=ollama_json_call(model),
+        budget=budget,
+        entailment_backend=entailment_backend,
+        entailment_model=model,
     )
-    context, source_map, by_source = build_llm_context(ranked_chunks, search_results, fetched_urls=fetched_urls)
-
-    # Build compact result
-    sources = []
-    for old_idx in sorted(by_source.keys()):
-        src = by_source[old_idx]
-        sources.append({
-            "num": source_map.get(old_idx, old_idx + 1),
-            "title": src["title"],
-            "url": src["url"],
-            "chunks": len(src["chunks"]),
-        })
-
-    return {
-        "query": query,
-        "context": context,
-        "sources": sources,
-        "context_length": len(context),
-        "source_count": len(by_source),
-        "routed_sources": routed_sources,
-        "discovery_count": len(discovery),
-        "discovery_errors": discovery_errors,
-    }
+    result.update({"query": query, "provider": provider, "model": model})
+    return result
 
 
 def web_read(url: str, lang: str = "en", use_cache: bool = True) -> dict:

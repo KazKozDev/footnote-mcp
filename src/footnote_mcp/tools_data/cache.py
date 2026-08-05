@@ -9,7 +9,8 @@ from datetime import datetime
 from pathlib import Path
 
 
-CACHE_DIR = Path(os.getenv("FOOTNOTE_SOURCE_CACHE", "~/.footnote-mcp/source_cache")).expanduser()
+_configured_cache = os.getenv("FOOTNOTE_SOURCE_CACHE", "").strip()
+CACHE_DIR = Path(_configured_cache or "~/.footnote-mcp/source_cache").expanduser()
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
