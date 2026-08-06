@@ -317,12 +317,22 @@ JavaScript-rendered pages.
 | `FOOTNOTE_DOMAIN_RPS` / `_BURST` | `3` / `5` | Per-domain rate limit (token bucket). |
 | `FOOTNOTE_BREAKER_THRESHOLD` / `_COOLDOWN` | `5` / `120` | Per-domain circuit breaker. |
 | `FOOTNOTE_NEGCACHE_TTL` | `300` | Seconds to remember a blocked URL. |
+| `FOOTNOTE_RETRY_AFTER_MAX_SECONDS` | `30` | Longest a request will block waiting out a 429/503 before handing the refusal back. |
+| `FOOTNOTE_HTTP_CACHE` | `1` | Store `ETag`/`Last-Modified` and revalidate with conditional requests. |
+| `FOOTNOTE_HTTP_CACHE_MAX_BYTES` | `1000000` | Largest body kept for revalidation. |
 | `FOOTNOTE_THIN_CONTENT_CHARS` | `200` | Below this extracted length, a script-heavy page counts as a JS shell. |
+
+The rate limit, circuit breaker and negative cache apply to **every** outbound request, not
+only to pages fetched through the ladder: they live in `politeness.py` and are taken inside
+`fetch._get`, which each tool's HTTP call funnels through. A `429` or `503` is waited out
+(honoring `Retry-After`) rather than retried immediately; `web_crawl` stops at the first
+refusal; and parallel fetching runs across hosts, never several workers at one host.
 
 ## Runtime data
 
 ```text
 ~/.footnote-mcp/source_cache/        # persistent page cache (with provenance)
+~/.footnote-mcp/source_cache/http/   # ETag/Last-Modified bodies for conditional requests
 ~/.footnote-mcp/research_memory.json # persistent research memory
 ```
 
@@ -344,7 +354,7 @@ docker run -i --rm footnote-mcp        # the client launches this; see MCP confi
 Published images are available from GitHub Container Registry:
 
 ```bash
-docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.5
+docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:0.2.6
 docker run -i --rm ghcr.io/kazkozdev/footnote-mcp:latest
 ```
 

@@ -12,6 +12,10 @@ Cross-cutting: a block/quality detector decides when to escalate; a per-domain
 rate limiter and circuit breaker keep us polite; a negative cache avoids retrying
 known-dead URLs. Everything is optional and degrades to the plain http path when
 nothing is configured (zero-config == previous behaviour).
+
+The politeness primitives themselves now live in ``politeness`` and are shared with
+``fetch._get``, so every request in the server is paced — not only the ones that
+come through this ladder. They are re-exported here for existing callers.
 """
 
 from __future__ import annotations
@@ -29,6 +33,8 @@ from curl_cffi import requests as http
 
 from . import core
 from .fetch import _get, fetch_page
+from .politeness import BLOCK_STATUSES, BREAKER, NEG_CACHE, RATE_LIMITER, CircuitBreaker, DomainRateLimiter, NegativeCache
+from .politeness import reset_state as _reset_politeness_state
 
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -78,7 +84,7 @@ def detect_block(status, html, error=None):
     """Return (blocked: bool, reason: str) for a fetch result."""
     if error and not html:
         return True, str(error)
-    if status in (401, 403, 407, 429, 503):
+    if status in BLOCK_STATUSES:
         return True, f"http_{status}"
     html_l = (html or "").lower()
     if not html_l.strip():
@@ -95,112 +101,10 @@ def detect_block(status, html, error=None):
     return False, ""
 
 
-# ── Per-domain politeness: rate limiter + circuit breaker + negative cache ──
+# ── Per-domain politeness ──────────────────────────────────────────────────
+# DomainRateLimiter / CircuitBreaker / NegativeCache moved to politeness.py so
+# fetch._get shares them; re-exported above for existing callers and tests.
 
-class DomainRateLimiter:
-    """Token-bucket limiter per domain. rps<=0 disables pacing."""
-
-    def __init__(self, rps=None, burst=None):
-        self._rps = rps
-        self._burst = burst
-        self._lock = threading.Lock()
-        self._state: dict[str, tuple[float, float]] = {}
-
-    def _params(self):
-        rps = self._rps if self._rps is not None else float(os.getenv("FOOTNOTE_DOMAIN_RPS", "3"))
-        burst = self._burst if self._burst is not None else float(os.getenv("FOOTNOTE_DOMAIN_BURST", "5"))
-        return rps, burst
-
-    def acquire(self, domain: str) -> float:
-        rps, burst = self._params()
-        if rps <= 0:
-            return 0.0
-        with self._lock:
-            tokens, last = self._state.get(domain, (burst, time.monotonic()))
-            now = time.monotonic()
-            tokens = min(burst, tokens + (now - last) * rps)
-            if tokens >= 1:
-                self._state[domain] = (tokens - 1, now)
-                wait = 0.0
-            else:
-                wait = (1 - tokens) / rps
-                self._state[domain] = (0.0, now + wait)
-        if wait > 0:
-            time.sleep(wait)
-        return wait
-
-    def reset(self):
-        with self._lock:
-            self._state.clear()
-
-
-class CircuitBreaker:
-    """Open per-domain after N consecutive failures; skip expensive tiers while open."""
-
-    def __init__(self, threshold=None, cooldown=None):
-        self._threshold = threshold
-        self._cooldown = cooldown
-        self._lock = threading.Lock()
-        self._fail: dict[str, int] = {}
-        self._open_until: dict[str, float] = {}
-
-    def _params(self):
-        threshold = self._threshold if self._threshold is not None else int(os.getenv("FOOTNOTE_BREAKER_THRESHOLD", "5"))
-        cooldown = self._cooldown if self._cooldown is not None else float(os.getenv("FOOTNOTE_BREAKER_COOLDOWN", "120"))
-        return threshold, cooldown
-
-    def is_open(self, domain: str) -> bool:
-        with self._lock:
-            return time.monotonic() < self._open_until.get(domain, 0.0)
-
-    def record_failure(self, domain: str):
-        threshold, cooldown = self._params()
-        with self._lock:
-            n = self._fail.get(domain, 0) + 1
-            self._fail[domain] = n
-            if n >= threshold:
-                self._open_until[domain] = time.monotonic() + cooldown
-
-    def record_success(self, domain: str):
-        with self._lock:
-            self._fail.pop(domain, None)
-            self._open_until.pop(domain, None)
-
-    def reset(self):
-        with self._lock:
-            self._fail.clear()
-            self._open_until.clear()
-
-
-class NegativeCache:
-    """Remember recently-blocked URLs so we don't immediately retry them."""
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._entries: dict[str, tuple[str, float]] = {}
-
-    def get(self, url: str):
-        with self._lock:
-            entry = self._entries.get(url)
-            if entry and time.monotonic() < entry[1]:
-                return entry[0]
-            if entry:
-                self._entries.pop(url, None)
-            return None
-
-    def put(self, url: str, reason: str):
-        ttl = float(os.getenv("FOOTNOTE_NEGCACHE_TTL", "300"))
-        if ttl <= 0:
-            return
-        with self._lock:
-            self._entries[url] = (reason, time.monotonic() + ttl)
-
-    def reset(self):
-        with self._lock:
-            self._entries.clear()
-
-
-# ── Proxy pool: sticky-per-domain + health ─────────────────────────────────
 
 class ProxyPool:
     def __init__(self):
@@ -357,19 +261,20 @@ def _scrape_external(url, lang="en"):
 
 
 # ── Module-level shared state ──────────────────────────────────────────────
+# The limiter, breaker and negative cache are the process-wide instances from
+# politeness — the same objects fetch._get uses. A ladder request and a plain
+# table-extraction request must draw from one bucket, or neither paces anything.
 
-_RATE_LIMITER = DomainRateLimiter()
-_BREAKER = CircuitBreaker()
-_NEG_CACHE = NegativeCache()
+_RATE_LIMITER = RATE_LIMITER
+_BREAKER = BREAKER
+_NEG_CACHE = NEG_CACHE
 _PROXIES = ProxyPool()
 _RENDERER = BrowserRenderer()
 
 
 def reset_state():
     """Reset all in-memory limiter/breaker/cache/proxy state (used by tests)."""
-    _RATE_LIMITER.reset()
-    _BREAKER.reset()
-    _NEG_CACHE.reset()
+    _reset_politeness_state()
     _PROXIES.reset()
 
 
@@ -440,7 +345,9 @@ def fetch(url, lang="en", http_fn=None, allow_browser=None, allow_proxy=None, al
                        error=f"recently blocked: {reason}")
 
     breaker_open = _BREAKER.is_open(domain)
-    _RATE_LIMITER.acquire(domain)
+    # No acquire() here: every tier's request goes through fetch._get, which now
+    # takes the token itself. Charging the bucket twice per page would halve the
+    # configured rate without saying so.
 
     best_final = best_html = best_pub = None  # best partial result seen, for graceful degrade
 
@@ -475,6 +382,8 @@ def fetch(url, lang="en", http_fn=None, allow_browser=None, allow_proxy=None, al
 
     # tier 3: headless browser
     if _browser_enabled(allow_browser) and not breaker_open:
+        # Chromium does not go through _get, so this tier takes its own token.
+        _RATE_LIMITER.acquire(domain)
         h3, s3, e3 = _RENDERER.render(url, lang=lang, proxy=None)
         b3, why3 = detect_block(s3 or 0, h3, e3)
         tiers.append(("browser", s3, why3 or "ok"))
@@ -487,6 +396,7 @@ def fetch(url, lang="en", http_fn=None, allow_browser=None, allow_proxy=None, al
         # tier 4: browser through a proxy
         if _proxy_enabled(allow_proxy) and _PROXIES.available():
             proxy = _PROXIES.get(domain, rotate=True)
+            _RATE_LIMITER.acquire(domain)
             h4, s4, e4 = _RENDERER.render(url, lang=lang, proxy=proxy)
             b4, why4 = detect_block(s4 or 0, h4, e4)
             tiers.append(("browser_proxy", s4, why4 or "ok"))

@@ -36,20 +36,41 @@ def test_web_archive_fetch_handles_no_snapshot(monkeypatch):
 
 # ── web_search_recent ──
 
-def test_web_search_recent_maps_freshness_and_passes_df(monkeypatch):
+def test_web_search_recent_time_boxes_every_provider(monkeypatch):
+    """Recency search used to run on DuckDuckGo alone, so a configured search API
+    never saw the news queries where result quality matters most."""
     captured = {}
 
-    def fake_ddg(query, num=None, lang="en", df=""):
-        captured["df"] = df
-        return [{"title": "T", "url": "http://a.com", "snippet": "s"}]
+    def fake_search(query, num=20, lang="en", debug=False, provider="auto", freshness=""):
+        captured["freshness"] = freshness
+        captured["query"] = query
+        return [{"title": "T", "url": "http://a.com", "snippet": "s", "engines": {"ddg", "tavily"}}]
 
-    monkeypatch.setattr(tools_extra, "search_ddg", fake_ddg)
+    monkeypatch.setattr(tools_extra, "search", fake_search)
 
     result = tools_extra.web_search_recent("news", freshness="week", num=5)
 
-    assert captured["df"] == "w"
+    assert captured["freshness"] == "week"
+    assert result["window"] == "week"
     assert result["count"] == 1
     assert result["results"][0]["url"] == "http://a.com"
+    assert result["results"][0]["engines"] == ["ddg", "tavily"]
+
+
+def test_web_search_recent_normalizes_short_freshness_aliases(monkeypatch):
+    captured = {}
+
+    def fake_search(query, num=20, lang="en", debug=False, provider="auto", freshness=""):
+        captured["freshness"] = freshness
+        return []
+
+    monkeypatch.setattr(tools_extra, "search", fake_search)
+
+    tools_extra.web_search_recent("news", freshness="d")
+    assert captured["freshness"] == "day"
+
+    tools_extra.web_search_recent("news", freshness="nonsense")
+    assert captured["freshness"] == "month"  # documented default
 
 
 # ── corroborate_claim ──

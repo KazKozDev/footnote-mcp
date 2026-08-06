@@ -467,3 +467,195 @@ def test_one_resting_provider_is_skipped_while_others_work(monkeypatch):
 
     assert search._provider_on_cooldown("marginalia") is True
     assert search._provider_on_cooldown("bing") is False
+
+
+# ── cost-aware provider rotation ──
+
+def _free_tier(monkeypatch, results):
+    monkeypatch.setattr(search, "search_bing", lambda *a, **k: results)
+    monkeypatch.setattr(search, "search_ddg", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_brave_scrape", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_wiby", lambda *a, **k: [])
+    monkeypatch.setattr(search, "search_marginalia", lambda *a, **k: [])
+
+
+def _rows(n, host="free"):
+    return [
+        {"title": f"quantum tunneling result {i}", "url": f"https://{host}.example/{i}", "snippet": "quantum tunneling"}
+        for i in range(n)
+    ]
+
+
+def test_a_healthy_free_tier_spends_no_metered_credit(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("FOOTNOTE_MIN_FREE_RESULTS", "3")
+    _free_tier(monkeypatch, _rows(5))
+    monkeypatch.setattr(search, "search_tavily", lambda *a, **k: pytest.fail("must not be charged"))
+
+    out = search.search("quantum tunneling", num=5)
+
+    assert out
+
+
+def test_a_thin_free_tier_escalates_to_one_metered_provider(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("FOOTNOTE_MIN_FREE_RESULTS", "5")
+    charged = []
+    _free_tier(monkeypatch, _rows(1))
+
+    def fake_tavily(q, num=10, lang="en"):
+        charged.append("tavily")
+        return _rows(3, host="tavily")
+
+    monkeypatch.setattr(search, "search_tavily", fake_tavily)
+
+    out = search.search("quantum tunneling", num=5)
+
+    assert charged == ["tavily"]
+    assert any("tavily.example" in item["url"] for item in out)
+
+
+def test_metered_providers_take_turns_instead_of_draining_the_first(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("BRAVE_API_KEY", "k")
+    monkeypatch.setenv("FOOTNOTE_MIN_FREE_RESULTS", "5")
+    monkeypatch.setattr(search, "_metered_cursor", 0)
+    charged = []
+    _free_tier(monkeypatch, _rows(1))
+    monkeypatch.setattr(search, "search_tavily",
+                        lambda q, num=10, lang="en": charged.append("tavily") or _rows(3, "tavily"))
+    monkeypatch.setattr(search, "search_brave",
+                        lambda q, num=10, lang="en": charged.append("brave") or _rows(3, "brave"))
+
+    for _ in range(4):
+        search.search("quantum tunneling", num=5)
+
+    assert charged == ["tavily", "brave", "tavily", "brave"]
+
+
+def test_a_resting_metered_provider_is_skipped(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("BRAVE_API_KEY", "k")
+    monkeypatch.setenv("FOOTNOTE_MIN_FREE_RESULTS", "5")
+    monkeypatch.setattr(search, "_metered_cursor", 0)
+    charged = []
+    _free_tier(monkeypatch, _rows(1))
+    monkeypatch.setattr(search, "search_tavily",
+                        lambda q, num=10, lang="en": charged.append("tavily") or _rows(3, "tavily"))
+    monkeypatch.setattr(search, "search_brave",
+                        lambda q, num=10, lang="en": charged.append("brave") or _rows(3, "brave"))
+    monkeypatch.setattr(search, "_provider_on_cooldown", lambda name: name == "tavily")
+
+    search.search("quantum tunneling", num=5)
+
+    assert charged == ["brave"]
+
+
+def test_merge_strategy_still_queries_every_configured_provider(monkeypatch):
+    monkeypatch.setenv("FOOTNOTE_PROVIDER_STRATEGY", "merge")
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("FOOTNOTE_MIN_FREE_RESULTS", "1")
+    charged = []
+    _free_tier(monkeypatch, _rows(5))
+    monkeypatch.setattr(search, "search_tavily",
+                        lambda q, num=10, lang="en": charged.append("tavily") or _rows(2, "tavily"))
+
+    search.search("quantum tunneling", num=5)
+
+    assert charged == ["tavily"]  # merge mode pays on every query, by design
+
+
+def test_on_topic_noise_does_not_count_as_a_strong_free_result(monkeypatch):
+    """"Geography of Spain" survives the permissive per-provider filter but answers
+    nothing about August 2026; counting it as a hit kept Tavily from being asked."""
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("FOOTNOTE_MIN_FREE_RESULTS", "3")
+    monkeypatch.setattr(search, "_metered_cursor", 0)
+    charged = []
+    noise = [
+        {"title": "Geography of Spain - Wikipedia", "url": "https://w.example/geo", "snippet": "Spain"},
+        {"title": "100 landmarks in Spain", "url": "https://w.example/marks", "snippet": "Spain"},
+        {"title": "Spain travel guide", "url": "https://w.example/guide", "snippet": "Spain"},
+        {"title": "Spain photos", "url": "https://w.example/photos", "snippet": "Spain"},
+    ]
+    _free_tier(monkeypatch, noise)
+    monkeypatch.setattr(
+        search, "search_tavily",
+        lambda q, num=10, lang="en": charged.append("tavily") or [
+            {"title": "Spain Events August 2026 calendar", "url": "https://t.example/e",
+             "snippet": "events in Spain in August 2026"}
+        ],
+    )
+
+    out = search.search("Spain events August 2026", num=5)
+
+    assert charged == ["tavily"]
+    assert any("t.example" in item["url"] for item in out)
+
+
+def test_results_that_cover_the_query_keep_the_metered_provider_unused(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("FOOTNOTE_MIN_FREE_RESULTS", "3")
+    real = [
+        {"title": f"Spain events August 2026 guide {i}", "url": f"https://f.example/{i}",
+         "snippet": "events in Spain in August 2026"}
+        for i in range(4)
+    ]
+    _free_tier(monkeypatch, real)
+    monkeypatch.setattr(search, "search_tavily", lambda *a, **k: pytest.fail("must not be charged"))
+
+    assert search.search("Spain events August 2026", num=5)
+
+
+# ── recency reaches every provider, not just the one engine that had a df param ──
+
+def test_a_recency_window_is_translated_per_provider(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    monkeypatch.setenv("BRAVE_API_KEY", "k")
+    seen = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["tavily"] = (json or {}).get("time_range")
+        return FakeJsonResp({"results": []})
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        seen["brave"] = (params or {}).get("freshness")
+        return FakeJsonResp({"web": {"results": []}})
+
+    monkeypatch.setattr(search.http, "post", fake_post)
+    monkeypatch.setattr(search.http, "get", fake_get)
+
+    search.search_tavily("q", num=5, freshness="week")
+    search.search_brave("q", num=5, freshness="week")
+
+    assert seen == {"tavily": "week", "brave": "pw"}
+
+
+def test_no_recency_window_leaves_provider_requests_untouched(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    seen = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["payload"] = json or {}
+        return FakeJsonResp({"results": []})
+
+    monkeypatch.setattr(search.http, "post", fake_post)
+
+    search.search_tavily("q", num=5)
+
+    assert "time_range" not in seen["payload"]
+
+
+def test_a_time_boxed_free_tier_asks_only_the_engine_that_can_filter(monkeypatch):
+    """Merging undated engines into a recency-filtered query is how stale content
+    farms outranked the dated results."""
+    asked = []
+    monkeypatch.setattr(search, "search_ddg",
+                        lambda q, num=None, lang="en", debug=False, df="": asked.append(("ddg", df)) or [])
+    monkeypatch.setattr(search, "search_bing", lambda *a, **k: asked.append(("bing", None)) or [])
+    monkeypatch.setattr(search, "search_brave_scrape", lambda *a, **k: asked.append(("brave", None)) or [])
+    monkeypatch.setattr(search, "search_wiby", lambda *a, **k: asked.append(("wiby", None)) or [])
+
+    search._run_free_providers("q", 5, "en", False, freshness="day")
+
+    assert asked == [("ddg", "d")]

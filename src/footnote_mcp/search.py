@@ -13,6 +13,7 @@ from curl_cffi import requests as http
 
 from .diagnostics import log
 from .fetch import _get
+from .politeness import retry_after_seconds
 
 
 _SEARCH_STOPWORDS = {
@@ -42,12 +43,7 @@ def _provider_cooldown_seconds(engine, response=None):
         seconds = max(0.0, float(os.getenv(env_name, default)))
     except (TypeError, ValueError):
         seconds = default
-    headers = getattr(response, "headers", {}) or {}
-    try:
-        seconds = max(seconds, float(headers.get("Retry-After", 0)))
-    except (TypeError, ValueError):
-        pass
-    return min(seconds, 3600.0)
+    return retry_after_seconds(response, default=seconds, cap=3600.0)
 
 
 def _start_provider_cooldown(engine, response=None):
@@ -670,14 +666,36 @@ def _normalize_api(items, engine):
     return out
 
 
-def search_tavily(query, num=10, lang="en"):
+_FRESHNESS_WINDOWS = {
+    "day": "day", "d": "day",
+    "week": "week", "w": "week",
+    "month": "month", "m": "month",
+    "year": "year", "y": "year",
+}
+
+
+def _freshness_window(freshness):
+    """Normalize a recency window, or "" when the query is not time-boxed.
+
+    One vocabulary for every provider: each maps it to its own parameter name, so a
+    recency-filtered search is no longer stuck on the single engine that happened to
+    implement it.
+    """
+    return _FRESHNESS_WINDOWS.get(str(freshness or "").strip().lower(), "")
+
+
+def search_tavily(query, num=10, lang="en", freshness=""):
     key = os.getenv("TAVILY_API_KEY")
     if not key:
         return []
+    payload = {"query": query, "max_results": min(num, 20), "search_depth": "basic"}
+    window = _freshness_window(freshness)
+    if window:
+        payload["time_range"] = window  # day | week | month | year
     resp = http.post(
         "https://api.tavily.com/search",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"query": query, "max_results": min(num, 20), "search_depth": "basic"},
+        json=payload,
         timeout=20,
     )
     if resp.status_code != 200:
@@ -687,14 +705,18 @@ def search_tavily(query, num=10, lang="en"):
     return _prepare_source_results(query, _normalize_api(items, "tavily"), "tavily")
 
 
-def search_brave(query, num=10, lang="en"):
+def search_brave(query, num=10, lang="en", freshness=""):
     key = os.getenv("BRAVE_API_KEY")
     if not key:
         return []
+    params = {"q": query, "count": min(num, 20)}
+    window = _freshness_window(freshness)
+    if window:
+        params["freshness"] = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}[window]
     resp = http.get(
         "https://api.search.brave.com/res/v1/web/search",
         headers={"X-Subscription-Token": key, "Accept": "application/json"},
-        params={"q": query, "count": min(num, 20)},
+        params=params,
         timeout=20,
     )
     if resp.status_code != 200:
@@ -704,14 +726,18 @@ def search_brave(query, num=10, lang="en"):
     return _prepare_source_results(query, _normalize_api(items, "brave"), "brave")
 
 
-def search_google(query, num=10, lang="en"):
+def search_google(query, num=10, lang="en", freshness=""):
     key = os.getenv("GOOGLE_API_KEY")
     cx = os.getenv("GOOGLE_CSE_ID")
     if not (key and cx):
         return []
+    params = {"key": key, "cx": cx, "q": query, "num": min(num, 10), "hl": lang}
+    window = _freshness_window(freshness)
+    if window:
+        params["dateRestrict"] = {"day": "d1", "week": "w1", "month": "m1", "year": "y1"}[window]
     resp = http.get(
         "https://www.googleapis.com/customsearch/v1",
-        params={"key": key, "cx": cx, "q": query, "num": min(num, 10), "hl": lang},
+        params=params,
         timeout=20,
     )
     if resp.status_code != 200:
@@ -793,18 +819,141 @@ def _provider_order(provider):
     return [name for name in ("searxng", "tavily", "brave", "google") if keyed[name]]
 
 
-def search(query, num=20, lang="en", debug=False, provider="auto"):
+# Providers that bill per call. A metered quota is a finite resource shared by every
+# question, so calls rotate through them instead of draining the first one listed.
+_METERED_PROVIDERS = ("tavily", "brave", "google")
+_metered_cursor = 0
+_metered_cursor_lock = threading.Lock()
+
+
+def _metered_pool():
+    """Configured metered providers that are not currently resting."""
+    keyed = {
+        "tavily": bool(os.getenv("TAVILY_API_KEY")),
+        "brave": bool(os.getenv("BRAVE_API_KEY")),
+        "google": bool(os.getenv("GOOGLE_API_KEY") and os.getenv("GOOGLE_CSE_ID")),
+    }
+    return [name for name in _METERED_PROVIDERS if keyed[name] and not _provider_on_cooldown(name)]
+
+
+def _next_metered_provider(skip=()):
+    """Next metered provider in round-robin order, or None when none is available."""
+    global _metered_cursor
+    pool = [name for name in _metered_pool() if name not in skip]
+    if not pool:
+        return None
+    with _metered_cursor_lock:
+        name = pool[_metered_cursor % len(pool)]
+        _metered_cursor += 1
+    return name
+
+
+def _min_free_results():
+    """Strong free results below which spending a metered call is worth it."""
+    try:
+        return max(0, int(os.getenv("FOOTNOTE_MIN_FREE_RESULTS", "3")))
+    except ValueError:
+        return 3
+
+
+def _strong_match_count(query, engine_results):
+    """Free results that actually look like answers, not merely on-topic pages.
+
+    The per-provider relevance filter is deliberately permissive — one distinctive
+    term is enough to survive it. Counting by that bar makes a page like
+    "Geography of Spain" look like a hit for "Spain events August 2026" and keeps a
+    metered provider that would have answered properly from ever being asked. A
+    strong match covers at least half of the distinctive query terms.
+    """
+    query_terms = _search_terms(query)
+    distinctive = query_terms - _GENERIC_SEARCH_TERMS or query_terms
+    if not distinctive:
+        return sum(len(results) for results in engine_results.values())
+
+    needed = 1 if len(distinctive) == 1 else max(2, (len(distinctive) + 1) // 2)
+    seen = set()
+    strong = 0
+    for results in engine_results.values():
+        for result in results:
+            url = _normalize_url(str(result.get("url") or ""))
+            if not url or url in seen:
+                continue
+            terms = _search_terms(
+                f"{result.get('title', '')} {result.get('snippet', '')} {result.get('url', '')}"
+            )
+            if len(distinctive & terms) >= needed:
+                seen.add(url)
+                strong += 1
+    return strong
+
+
+def _provider_strategy():
+    return (os.getenv("FOOTNOTE_PROVIDER_STRATEGY", "cost_aware") or "cost_aware").strip().lower()
+
+
+def _run_free_providers(query, num, lang, debug, with_marginalia=False, freshness=""):
+    """Query everything that costs nothing: self-hosted SearXNG and the scrapers."""
     from . import core
 
+    window = _freshness_window(freshness)
+    free: dict[str, list] = {"ddg": []}
+    jobs: dict[str, tuple] = {
+        # Only DuckDuckGo's HTML endpoint takes a date filter, so a time-boxed query
+        # asks it alone rather than diluting the merge with undated engines.
+        "ddg": (search_ddg, (query, core.NUM_PER_ENGINE, lang, debug, window[:1] if window else "")),
+    }
+    if not window:
+        free.update({"bing": [], "brave": [], "wiby": []})
+        jobs.update({
+            "bing": (search_bing, (query, core.NUM_PER_ENGINE, lang, debug)),
+            "brave": (search_brave_scrape, (query, core.NUM_PER_ENGINE, lang, debug)),
+            "wiby": (search_wiby, (query, core.NUM_PER_ENGINE, lang, debug)),
+        })
+        if with_marginalia:
+            free["marginalia"] = []
+            jobs["marginalia"] = (search_marginalia, (query, core.NUM_PER_ENGINE, lang, debug))
+    if _searxng_url():
+        # Self-hosted: keyed, but unmetered, so it belongs with the free tier.
+        free["searxng"] = []
+        jobs["searxng"] = (search_searxng, (query, num, lang))
+
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        futures = {pool.submit(fn, *args): name for name, (fn, args) in jobs.items()}
+        for future in as_completed(futures):
+            engine = futures[future]
+            try:
+                free[engine] = _prepare_source_results(query, future.result(), engine)
+            except Exception as exc:
+                log.warning("[%s] Error: %s", engine.upper(), exc)
+    return free
+
+
+def _call_metered(query, num, lang, name, freshness=""):
+    """One metered provider call. Returns prepared results (possibly empty)."""
+    try:
+        fn = globals()[_DIRECT_PROVIDERS[name]]
+        window = _freshness_window(freshness)
+        results = fn(query, num=num, lang=lang, freshness=window) if window else fn(query, num=num, lang=lang)
+        prepared = _prepare_source_results(query, results, name)
+        log.info("[SEARCH] metered provider=%s -> %s results", name, len(prepared))
+        return prepared
+    except Exception as exc:
+        log.warning("[SEARCH] metered provider %s failed: %s", name, exc)
+        return []
+
+
+def search(query, num=20, lang="en", debug=False, provider="auto", freshness=""):
+    """Merge providers into one ranking. ``freshness`` time-boxes every provider."""
     requested_provider = (provider or "auto").lower()
-    direct_results = {}
 
     # An explicitly selected provider remains isolated by definition.
     if requested_provider in _DIRECT_PROVIDERS:
         name = requested_provider
         try:
-            results = globals()[_DIRECT_PROVIDERS[name]](query, num=num, lang=lang)
-            results = _prepare_source_results(query, results, name)
+            results = _call_metered(query, num, lang, name, freshness) if _freshness_window(freshness) \
+                else _prepare_source_results(
+                    query, globals()[_DIRECT_PROVIDERS[name]](query, num=num, lang=lang), name
+                )
             if results:
                 log.info("[SEARCH] provider=%s -> %s results", name, len(results))
                 return _merge_engine_results({name: results}, num=num)
@@ -813,46 +962,48 @@ def search(query, num=20, lang="en", debug=False, provider="auto"):
             log.warning("[SEARCH] provider %s failed: %s", name, exc)
         return []
 
-    # In auto mode, every configured provider contributes to the final merge.
-    configured_order = [] if requested_provider == "scrape" else _provider_order("auto")
-    for name in configured_order:
-        try:
-            results = globals()[_DIRECT_PROVIDERS[name]](query, num=num, lang=lang)
-            prepared = _prepare_source_results(query, results, name)
+    with_marginalia = requested_provider == "auto+marginalia"
+    combined = _run_free_providers(query, num, lang, debug, with_marginalia, freshness)
+    free_count = _strong_match_count(query, combined)
+
+    if requested_provider != "scrape" and _provider_strategy() != "merge":
+        # Cost-aware: the free tier answers most queries outright. A metered credit is
+        # spent only when free results are too thin to be worth ranking, and the
+        # provider that gets charged rotates so one quota does not empty first.
+        threshold = _min_free_results()
+        if free_count >= threshold:
+            log.info("[SEARCH] free tier returned %s strong results (>= %s); no metered call",
+                     free_count, threshold)
+        else:
+            tried = []
+            while True:
+                name = _next_metered_provider(skip=tried)
+                if not name:
+                    if not tried:
+                        log.info("[SEARCH] free tier thin (%s results) and no metered provider available",
+                                 free_count)
+                    break
+                tried.append(name)
+                prepared = _call_metered(query, num, lang, name, freshness)
+                if prepared:
+                    combined[name] = _prepare_source_results(
+                        query, combined.get(name, []) + prepared, name
+                    )
+                    break
+                # An empty answer is not a usable one; try one alternate, then stop.
+                if len(tried) >= 2:
+                    break
+    elif requested_provider != "scrape":
+        # Legacy merge strategy: every configured provider contributes to every query.
+        for name in _provider_order("auto"):
+            if name == "searxng" and "searxng" in combined:
+                continue
+            prepared = _call_metered(query, num, lang, name, freshness)
             if prepared:
-                direct_results[name] = prepared
-                log.info("[SEARCH] provider=%s -> %s results", name, len(prepared))
-            else:
-                log.info("[SEARCH] provider=%s returned 0 results", name)
-        except Exception as exc:
-            log.warning("[SEARCH] provider %s failed: %s", name, exc)
+                combined[name] = _prepare_source_results(
+                    query, combined.get(name, []) + prepared, name
+                )
 
-    # 2. Fallback: query the latency-bounded zero-key sources in parallel and merge.
-    # The opt-in auto+marginalia mode adds the slower shared Marginalia endpoint
-    # without changing the latency contract of the default auto mode.
-    scraped = {"bing": [], "ddg": [], "brave": [], "wiby": []}
-    if requested_provider == "auto+marginalia":
-        scraped["marginalia"] = []
-
-    with ThreadPoolExecutor(max_workers=len(scraped)) as pool:
-        futures = {
-            pool.submit(search_bing, query, core.NUM_PER_ENGINE, lang, debug): "bing",
-            pool.submit(search_ddg, query, core.NUM_PER_ENGINE, lang, debug): "ddg",
-            pool.submit(search_brave_scrape, query, core.NUM_PER_ENGINE, lang, debug): "brave",
-            pool.submit(search_wiby, query, core.NUM_PER_ENGINE, lang, debug): "wiby",
-        }
-        if "marginalia" in scraped:
-            futures[pool.submit(search_marginalia, query, core.NUM_PER_ENGINE, lang, debug)] = "marginalia"
-        for future in as_completed(futures):
-            engine = futures[future]
-            try:
-                scraped[engine] = _prepare_source_results(query, future.result(), engine)
-            except Exception as exc:
-                log.warning("[%s] Error: %s", engine.upper(), exc)
-
-    counts = ", ".join(f"{name.title()}: {len(results)}" for name, results in scraped.items())
+    counts = ", ".join(f"{name.title()}: {len(results)}" for name, results in combined.items())
     log.info("[MERGE] %s; merging", counts)
-    combined = dict(direct_results)
-    for name, results in scraped.items():
-        combined[name] = _prepare_source_results(query, combined.get(name, []) + results, name)
     return _merge_engine_results(combined, num=num)

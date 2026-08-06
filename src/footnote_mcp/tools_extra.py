@@ -22,7 +22,8 @@ from bs4 import BeautifulSoup
 from . import core
 from .extract import extract_content
 from .fetch import _get, fetch_page
-from .search import search_ddg
+from .politeness import BREAKER, NEG_CACHE, domain_of, is_block_error
+from .search import _freshness_window, search
 from .tools_data.cache import CACHE_DIR
 from .tools_data.classify import classify_source
 from .tools_data.entailment import evidence_entailment
@@ -85,19 +86,29 @@ def web_archive_fetch(url: str, timestamp: str = "", lang: str = "en", fetch_tex
 # ── 2. Freshness-filtered search ──
 
 def web_search_recent(query: str, freshness: str = "month", lang: str = "en", num: int = 10) -> dict:
-    """Search with a recency window via DuckDuckGo's date filter.
+    """Search restricted to a recency window, across every capable provider.
 
-    ``freshness`` is day | week | month | year (or d | w | m | y).
+    ``freshness`` is day | week | month | year (or d | w | m | y). This used to query
+    DuckDuckGo alone, which meant recency-filtered searches — the news case, where
+    result quality matters most — never reached a configured search API and ran on a
+    single scraped engine. Every provider now receives the window in its own dialect.
     """
-    fmap = {"day": "d", "week": "w", "month": "m", "year": "y", "d": "d", "w": "w", "m": "m", "y": "y"}
-    df = fmap.get((freshness or "month").lower(), "m")
-    results = search_ddg(query, num=num, lang=lang, df=df)
+    window = _freshness_window(freshness) or "month"
+    results = search(query, num=num, lang=lang, freshness=window)
     return {
         "query": query,
         "freshness": freshness,
-        "df": df,
+        "window": window,
         "count": len(results),
-        "results": [{"title": r["title"], "url": r["url"], "snippet": r.get("snippet", "")} for r in results],
+        "results": [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("snippet", ""),
+                "engines": sorted(r.get("engines", [])),
+            }
+            for r in results
+        ],
     }
 
 
@@ -311,12 +322,17 @@ def web_crawl(start_url: str, max_pages: int = 10, same_domain: bool = True, lan
     """Breadth-first crawl from a start URL, fetching and extracting each page.
 
     Stays within the start host by default. Capped at 50 pages for safety.
+
+    Pages are paced per domain by the limiter in ``fetch._get``, and the crawl stops
+    outright at the first refusal: walking a whole queue while a host answers 429 is
+    how a soft limit becomes an IP ban.
     """
     max_pages = max(1, min(int(max_pages or 10), 50))
     start_host = (urlparse(start_url).hostname or "").lower()
     seen: set[str] = set()
     queue: deque[str] = deque([start_url])
     pages = []
+    stopped_reason = ""
 
     while queue and len(pages) < max_pages:
         url = queue.popleft().split("#")[0]
@@ -324,9 +340,22 @@ def web_crawl(start_url: str, max_pages: int = 10, same_domain: bool = True, lan
             continue
         seen.add(url)
 
+        host = domain_of(url)
+        if BREAKER.is_open(host):
+            stopped_reason = f"circuit open for {host}"
+            break
+        blocked_before = NEG_CACHE.get(url)
+        if blocked_before:
+            pages.append({"url": url, "error": f"recently blocked: {blocked_before}", "text_length": 0})
+            continue
+
         fetched_url, html, pub_date, err = fetch_page(url, lang=lang)
         if err or not html:
             pages.append({"url": url, "error": err or "empty body", "text_length": 0})
+            if is_block_error(err):
+                NEG_CACHE.put(url, str(err))
+                stopped_reason = f"stopped after refusal: {err}"
+                break
             continue
 
         text = extract_content(html, url=fetched_url) or ""
@@ -352,12 +381,15 @@ def web_crawl(start_url: str, max_pages: int = 10, same_domain: bool = True, lan
         except Exception:
             pass
 
-    return {
+    result = {
         "start_url": start_url,
         "same_domain": same_domain,
         "pages_crawled": len(pages),
         "pages": pages,
     }
+    if stopped_reason:
+        result["stopped_reason"] = stopped_reason
+    return result
 
 
 # ── 9. Consolidated dataset export ──
