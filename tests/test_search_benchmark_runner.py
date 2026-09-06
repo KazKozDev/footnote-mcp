@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import signal
 import sys
 import time
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location(
@@ -110,6 +113,11 @@ def test_judge_rejects_insufficient_evidence_without_model_call(monkeypatch):
     }
 
 
+@pytest.mark.skipif(
+    not hasattr(signal, "setitimer"),
+    reason="_run_with_hard_timeout documents itself as Unix-only: without "
+           "signal.setitimer it runs the task unguarded, which is what Windows gets",
+)
 def test_hard_task_timeout_interrupts_wall_clock_work():
     started = time.monotonic()
     try:
