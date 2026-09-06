@@ -2,6 +2,8 @@
 
 Search, extract data, and verify every claim against the source page.
 
+Unlike search APIs (Tavily, Exa) or scrapers (Firecrawl) that return raw text or markdown, `footnote-mcp` is built for verification: every claim is checked against the raw source text with sentence-level citations and character offsets, with zero required API keys.
+
 [Add to Cursor](https://cursor.com/install-mcp?name=footnote&config=eyJjb21tYW5kIjoiZm9vdG5vdGUtbWNwIn0%3D) · [Claude Desktop setup](#quick-start)
 
 <video src="https://github.com/user-attachments/assets/47f66267-0210-47a7-8c21-12a889aeebb0" controls muted playsinline width="820">
@@ -90,49 +92,67 @@ ledger with a funnel showing where candidates were lost.
 query → merged discovery → fetch ladder → extract (text · tables · files) → verify vs source → evidence
 ```
 
-## Configuration
+<details>
+<summary>All 45 tools by category</summary>
 
-The server takes one flag, `--headed`, which shows the Chromium window instead of running it
-invisibly — useful for watching the browser tier work on a page that keeps failing. Your MCP
-client launches the server, so it goes in the client config rather than a terminal:
+### Search (8)
+- `web_search` — Multi-engine search across zero-key providers (Bing, DuckDuckGo, Brave, Wiby) and optional metered APIs
+- `web_search_recent` — Search restricted to a recency window (day, week, month, year)
+- `web_deep_search` — Iterative multi-step research loop with evidence ledger and funnel diagnostics
+- `papers_search` — Academic paper search via Crossref and arXiv
+- `encyclopedia_search` — Wikipedia and Wikidata entity lookup plus read-only SPARQL
+- `github_search` — Search public repositories, code, issues, and commits
+- `archive_search` — Historical snapshots via Wayback Machine and Common Crawl
+- `generate_search_queries` — Generate targeted operator queries (`site:`, `filetype:csv`)
 
-```json
-{"mcpServers": {"footnote": {"command": "footnote-mcp", "args": ["--headed"]}}}
-```
+### Fetch (4)
+- `web_read` — Fetch URL, extract text, evaluate source quality, and cache snapshot
+- `web_fetch_authenticated` — Fetch pages requiring custom cookies or session headers
+- `web_archive_fetch` — Retrieve the nearest Wayback Machine snapshot for dead or changed URLs
+- `web_crawl` — Breadth-first crawl following links from a starting URL
 
-Everything else is configured through the environment.
+### Extract (15)
+- `web_extract_tables` — Parse HTML tables into typed columns and rows with source URLs
+- `web_detect_downloads` — Discover linked data files (CSV, TSV, XLS, XLSX, PDF, JSON, XML)
+- `web_parse_file` — Download and parse tabular data and PDF documents
+- `web_fetch_json` — Fetch direct REST API endpoints into parsed JSON
+- `check_date_completeness` — Validate time series date continuity across calendar and market schedules
+- `resolve_units` — Normalize currencies, units, and currency pairs
+- `validate_unit_rows` — Detect and reject rows with conflicting units or currencies
+- `reconcile_time_series` — Align series by key, compute deltas, and flag missing entries or outliers
+- `export_dataset` — Save consolidated rows to CSV, XLSX, or JSON files
+- `tool_spec_propose` — Propose task-specific extraction recipe specifications
+- `tool_code_generate` — Generate starter Python extraction recipes
+- `tool_code_validate` — Validate recipe code against an AST safety allowlist
+- `tool_code_run_sandboxed` — Execute extraction code inside a restricted subprocess
+- `tool_promote` — Persist validated recipes to local memory
+- `recipe_registry` — List, inspect, run, and delete registered extraction recipes
 
-### Environment variables
+### Verify (8)
+- `evidence_entailment` — Evaluate whether source text entails a claim (heuristic, Ollama, or NLI)
+- `corroborate_claim` — Triangulate claim consensus or conflict across multiple excerpts
+- `locate_claim_span` — Locate supporting sentences with character offsets and containment scores
+- `classify_source` — Classify domains (official, aggregator, blog, forum, interactive, blocked)
+- `source_cache_get` — Retrieve cached page snapshots and provenance metadata
+- `source_cache_put` — Store page contents and metadata into persistent cache
+- `build_research_debug_report` — Compact diagnostic report of queries, sources, and verification gaps
+- `startup_health_check` — Inspect availability of parsers, browser runtime, OCR, and cache directories
 
-Every one is optional, but that is not the same as unused. The free tier — Bing, DuckDuckGo,
-Brave and Wiby scraped without a key — answers first, on every query. A metered provider is
-called only when the free tier comes back with fewer than `FOOTNOTE_MIN_FREE_RESULTS` strong
-matches, and then just one of them, rotating between whichever are configured so a single
-quota does not drain first. Paid search here is the fallback, not the default.
+### Browser (10)
+- `web_navigate` — Open URL in Chromium session (headless or `--headed`)
+- `web_snapshot` — Inspect interactive DOM accessibility tree with stable element references
+- `web_click` — Click interactive page elements by reference ID or CSS selector
+- `web_type` — Enter text into form fields and input elements
+- `web_scroll` — Scroll viewports or containers to reveal dynamic content
+- `web_extract` — Extract targeted HTML elements or attributes
+- `web_screenshot` — Capture page screenshots with optional Tesseract OCR
+- `browser_set_date_range` — Manipulate dynamic web date-picker controls
+- `browser_extract_tables` — Extract client-side rendered tables after DOM hydration
+- `browser_extract_tables_for_date_range` — Automate date selection and table extraction cycles
 
-So keys are worth having but nothing breaks without them. With none set there is simply no
-tier to fall back on: most queries are unaffected, and the narrow or obscure ones — where the
-free engines return two weak hits instead of ten — stay thin rather than being topped up.
-That is the whole difference a key buys.
+Full parameters and schemas: [docs/tools.md](docs/tools.md).
 
-| Variable | Effect when set | Effect when unset |
-|---|---|---|
-| `FOOTNOTE_SEARXNG_URL` | Self-hosted SearXNG joins the free tier, unmetered | Free tier is Bing, DuckDuckGo, Brave, Wiby |
-| `TAVILY_API_KEY` | Tavily joins the metered rotation | Skipped; never called |
-| `BRAVE_API_KEY` | Brave Search API joins the rotation, alongside scraped Brave | Only the scraped, keyless Brave is used |
-| `GOOGLE_API_KEY` **and** `GOOGLE_CSE_ID` | Google Programmable Search joins the rotation — both are required, either alone does nothing | Skipped; never called |
-| `FOOTNOTE_MIN_FREE_RESULTS` | Free results below which a metered call is worth spending | `3` |
-| `FOOTNOTE_PROVIDER_STRATEGY` | `merge` calls every configured provider on every query | `cost_aware`: free first, one metered call only if needed |
-| `GITHUB_TOKEN` | `github_search` runs at your account's rate limit | Works at GitHub's lower per-IP limit |
-| `FOOTNOTE_RESEARCH_MODEL` | `web_deep_search` plans requirements and extracts facts with this Ollama model | Runs without a planner |
-| `FOOTNOTE_EMBED_MODEL` | Model for `semantic: true` reranking | `bge-m3`; without Ollama, ranking is unchanged |
-| `FOOTNOTE_BROWSER_FALLBACK` | `0` disables the Chromium tier | Enabled |
-| `FOOTNOTE_SEARCH_CACHE_TTL` | Seconds a scraped search result is reused; `0` disables | `86400` |
-| `FOOTNOTE_PROXIES` | Comma-separated proxies for the fetch ladder and refused searches | Direct connections only |
-| `FOOTNOTE_SCRAPE_API` | `firecrawl` or `scrapingbee` as the last fetch tier, with its key | Ladder stops at the browser tier |
-| `FOOTNOTE_SOURCE_CACHE` | Cache location | `~/.footnote-mcp/source_cache/` |
-
-Every variable with its default: [.env.example](.env.example), [docs/fetching.md](docs/fetching.md).
+</details>
 
 ## Requirements
 
@@ -151,6 +171,38 @@ Every variable with its default: [.env.example](.env.example), [docs/fetching.md
 - Semantic reranking is best-effort: with no Ollama reachable, the original ranking is returned unchanged.
 - Generated recipes run in a subprocess that may import only `csv`, `datetime`, `html`, `json`, `math`, `re` and `statistics`, with `eval`, `exec`, `open` and `__import__` rejected — a validator, not a hardened sandbox.
 - The hosted HTTP server holds per-user rate limits in memory; they reset on restart.
+
+## Configuration
+
+The server takes one flag, `--headed`, which shows the Chromium window instead of running it
+invisibly — useful for watching the browser tier work on a page that keeps failing:
+
+```json
+{"mcpServers": {"footnote": {"command": "footnote-mcp", "args": ["--headed"]}}}
+```
+
+### Environment variables
+
+All environment variables are optional. The free tier (Bing, DuckDuckGo, Brave, Wiby) answers first; metered providers are called only when free results fall below `FOOTNOTE_MIN_FREE_RESULTS`.
+
+| Variable | Effect when set | Effect when unset |
+|---|---|---|
+| `FOOTNOTE_SEARXNG_URL` | Self-hosted SearXNG joins the free tier, unmetered | Free tier is Bing, DuckDuckGo, Brave, Wiby |
+| `TAVILY_API_KEY` | Tavily joins the metered rotation | Skipped; never called |
+| `BRAVE_API_KEY` | Brave Search API joins the rotation, alongside scraped Brave | Only the scraped, keyless Brave is used |
+| `GOOGLE_API_KEY` **and** `GOOGLE_CSE_ID` | Google Programmable Search joins the rotation | Skipped; never called |
+| `FOOTNOTE_MIN_FREE_RESULTS` | Free results threshold to trigger metered fallback | `3` |
+| `FOOTNOTE_PROVIDER_STRATEGY` | `merge` calls all providers; `cost_aware` calls metered only if needed | `cost_aware` |
+| `GITHUB_TOKEN` | `github_search` runs at authenticated rate limits | Unauthenticated rate limits |
+| `FOOTNOTE_RESEARCH_MODEL` | Ollama model for query planning and fact extraction in `web_deep_search` | Runs without planner |
+| `FOOTNOTE_EMBED_MODEL` | Ollama model for `semantic: true` reranking | `bge-m3` |
+| `FOOTNOTE_BROWSER_FALLBACK` | `0` disables Chromium browser fallback | Enabled |
+| `FOOTNOTE_SEARCH_CACHE_TTL` | Search cache TTL in seconds (`0` disables) | `86400` |
+| `FOOTNOTE_PROXIES` | Comma-separated proxy URLs for requests | Direct connections |
+| `FOOTNOTE_SCRAPE_API` | Hosted scraper fallback (`firecrawl` or `scrapingbee`) with key | Browser tier is last fallback |
+| `FOOTNOTE_SOURCE_CACHE` | Directory for raw cached pages | `~/.footnote-mcp/source_cache/` |
+
+Full list and defaults: [.env.example](.env.example), [docs/fetching.md](docs/fetching.md), [docs/search-backends.md](docs/search-backends.md).
 
 <details>
 <summary>Docker, uvx, from source, OCR, tests</summary>
@@ -202,3 +254,4 @@ RUN_LIVE_WEB_TESTS=1 python -m pytest -m live    # opt-in live search
 [Issues](https://github.com/KazKozDev/footnote-mcp/issues) · [LICENSE](LICENSE) · [Tools](docs/tools.md) · [Hosting](docs/hosting.md) · [Benchmarks](benchmarks/REPORT.md) · [LinkedIn](https://www.linkedin.com/in/kazkozdev)
 
 </div>
+
