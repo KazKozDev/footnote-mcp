@@ -16,6 +16,15 @@ against the source text before they count. It also degrades gracefully — with 
 and no config it still works (scraped search + an automatic headless-browser fallback +
 an offline verification heuristic); keys and env vars only make it better.
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/47f66267-0210-47a7-8c21-12a889aeebb0" controls muted playsinline width="820">
+    Your browser does not support inline video.
+    <a href="https://www.youtube.com/watch?v=1yz3X0x1I6E" target="_blank" rel="noopener noreferrer">Watch on YouTube</a>
+  </video>
+</p>
+
+---
+
 ## Quick start
 
 From [PyPI](https://pypi.org/project/footnote-mcp/) (Python ≥ 3.10):

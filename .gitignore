@@ -17,3 +17,8 @@ dist/
 
 # Local benchmark outputs may contain model predictions for encrypted eval sets.
 benchmarks/results/
+
+# Media binaries
+*.mov
+*.mp4
+
