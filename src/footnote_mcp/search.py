@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from urllib.parse import parse_qs, quote, quote_plus, unquote, urlencode, urlparse
 
 from bs4 import BeautifulSoup
@@ -28,6 +30,14 @@ _GENERIC_SEARCH_TERMS = {
 
 _PROVIDER_COOLDOWN_UNTIL: dict[str, float] = {}
 _PROVIDER_COOLDOWN_LOCK = threading.Lock()
+# Cooldowns also survive a restart: the ban lives at the provider, keyed to our
+# IP, so a fresh process must not walk straight back into it. Deadlines are
+# persisted as wall-clock epochs; the in-memory copy stays monotonic.
+_COOLDOWN_STATE_PATH = Path(
+    os.getenv("FOOTNOTE_SOURCE_CACHE", "~/.footnote-mcp/source_cache")
+).expanduser() / "provider_cooldowns.json"
+_PERSISTED_COOLDOWNS_LOADED = False
+_PERSISTED_COOLDOWN_UNTIL: dict[str, float] = {}
 _PROVIDER_COOLDOWN_DEFAULTS = {"brave": 300.0, "ddg": 120.0}
 _PROVIDER_FALLBACK_COOLDOWN = 180.0
 # Engines that can rest. Used to tell "this one is resting" from "there is
@@ -46,23 +56,70 @@ def _provider_cooldown_seconds(engine, response=None):
     return retry_after_seconds(response, default=seconds, cap=3600.0)
 
 
+def _load_persisted_cooldowns():
+    """Read cooldown deadlines left behind by an earlier process."""
+    global _PERSISTED_COOLDOWNS_LOADED
+    if _PERSISTED_COOLDOWNS_LOADED:
+        return
+    _PERSISTED_COOLDOWNS_LOADED = True
+    try:
+        raw = json.loads(_COOLDOWN_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(raw, dict):
+        return
+    now = time.time()
+    for engine, until in raw.items():
+        try:
+            until = float(until)
+        except (TypeError, ValueError):
+            continue
+        if until > now:
+            _PERSISTED_COOLDOWN_UNTIL[str(engine)] = until
+
+
+def _save_persisted_cooldowns():
+    """Best-effort: a lost cooldown file costs politeness, never correctness."""
+    now = time.time()
+    live = {name: until for name, until in _PERSISTED_COOLDOWN_UNTIL.items() if until > now}
+    try:
+        _COOLDOWN_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _COOLDOWN_STATE_PATH.write_text(json.dumps(live), encoding="utf-8")
+    except OSError as exc:
+        log.debug("[cooldown] could not persist state: %s", exc)
+
+
 def _start_provider_cooldown(engine, response=None):
     seconds = _provider_cooldown_seconds(engine, response)
     if seconds <= 0:
         return
     until = time.monotonic() + seconds
     with _PROVIDER_COOLDOWN_LOCK:
+        _load_persisted_cooldowns()
         _PROVIDER_COOLDOWN_UNTIL[engine] = max(_PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0), until)
+        _PERSISTED_COOLDOWN_UNTIL[engine] = max(
+            _PERSISTED_COOLDOWN_UNTIL.get(engine, 0.0), time.time() + seconds
+        )
+        _save_persisted_cooldowns()
     log.warning("[%s] Rate limited; cooling down for %.0fs", engine.upper(), seconds)
 
 
 def _provider_on_cooldown(engine):
     now = time.monotonic()
     with _PROVIDER_COOLDOWN_LOCK:
+        _load_persisted_cooldowns()
+        carried = _PERSISTED_COOLDOWN_UNTIL.get(engine, 0.0) - time.time()
+        if carried > 0:
+            # Deadline set before this process started; fold it into the
+            # monotonic clock so the rest of the logic stays unchanged.
+            _PROVIDER_COOLDOWN_UNTIL[engine] = max(
+                _PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0), now + carried
+            )
         until = _PROVIDER_COOLDOWN_UNTIL.get(engine, 0.0)
         remaining = until - now
         if remaining <= 0:
             _PROVIDER_COOLDOWN_UNTIL.pop(engine, None)
+            _PERSISTED_COOLDOWN_UNTIL.pop(engine, None)
             return False
         everything_resting = all(
             _PROVIDER_COOLDOWN_UNTIL.get(name, 0.0) > now for name in _BACKOFF_ENGINES
@@ -273,6 +330,43 @@ def _ddg_extract_real_url(href):
     return href
 
 
+# Requests to the search endpoints are made to look like a submission from the
+# DuckDuckGo home page rather than a URL typed into the address bar, which is
+# what a bare Sec-Fetch-Site: none says.
+_DDG_FORM_HEADERS = {
+    "Referer": "https://duckduckgo.com/",
+    "Origin": "https://duckduckgo.com",
+    "Sec-Fetch-Site": "same-site",
+    "Sec-Fetch-Mode": "navigate",
+}
+
+# Tried in order. Measured: the two hosts share one rate-limit budget — a lite
+# request sent immediately after html refuses comes back 202 as well — so lite
+# is NOT a way around a block, and a refusal must not be retried against it.
+# It is kept only as a second shot when html fails some other way: a 5xx, a
+# transport error, or markup that stops parsing.
+_DDG_ENDPOINTS = (
+    ("html", "https://html.duckduckgo.com/html/?q={q}"),
+    ("lite", "https://lite.duckduckgo.com/lite/?q={q}"),
+)
+
+
+def _parse_ddg_lite(soup, add, num, results):
+    """The lite endpoint is a bare table: one <tr> per link, snippet in a
+    following cell that holds no link of its own."""
+    for row in soup.select("tr"):
+        a = row.find("a", href=True)
+        if not a:
+            continue
+        title = a.get_text(strip=True)
+        if not title:
+            continue
+        snippet_cells = [td.get_text(strip=True) for td in row.find_all("td") if not td.find("a")]
+        add(title, a["href"], " ".join(part for part in snippet_cells if part).strip())
+        if len(results) >= num:
+            break
+
+
 def search_ddg(query, num=None, lang="en", debug=False, df=""):
     from . import core
 
@@ -283,34 +377,11 @@ def search_ddg(query, num=None, lang="en", debug=False, df=""):
         return []
 
     # df = DuckDuckGo freshness filter: d (day), w (week), m (month), y (year).
-    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
-    if df in ("d", "w", "m", "y"):
-        url += f"&df={df}"
+    suffix = f"&df={df}" if df in ("d", "w", "m", "y") else ""
 
-    if debug:
-        log.debug("[DDG] %s", url)
-
-    try:
-        resp = _get(url, lang)
-    except Exception as exc:
-        log.warning("[DDG] Request failed: %s", exc)
-        return []
-
-    if debug:
-        with open("debug_ddg.html", "w", encoding="utf-8") as handle:
-            handle.write(resp.text)
-        log.debug("[DDG] Status %s, %s bytes -> debug_ddg.html", resp.status_code, len(resp.text))
-
-    if resp.status_code in (202, 429):
-        _start_provider_cooldown("ddg", resp)
-        return []
-    if resp.status_code != 200:
-        log.warning("[DDG] HTTP %s", resp.status_code)
-        return []
-
-    soup = BeautifulSoup(resp.text, "html.parser")
     results = []
     seen = set()
+    rate_limited = None
 
     def _add(title, link, snippet=""):
         link = _ddg_extract_real_url(link)
@@ -325,23 +396,56 @@ def search_ddg(query, num=None, lang="en", debug=False, df=""):
         seen.add(norm)
         results.append({"title": title, "url": link, "snippet": snippet})
 
-    for div in soup.select("div.result, div.web-result"):
-        a = div.select_one("a.result__a")
-        if not a:
-            continue
-        title = a.get_text(strip=True)
-        link = a.get("href", "")
-        sn = div.select_one("a.result__snippet, div.result__snippet")
-        snippet = sn.get_text(strip=True) if sn else ""
-        _add(title, link, snippet)
-        if len(results) >= num:
+    for tag, template in _DDG_ENDPOINTS:
+        if results:
             break
+        url = template.format(q=quote_plus(query)) + suffix
+        if debug:
+            log.debug("[DDG/%s] %s", tag, url)
 
-    if not results:
-        for a in soup.select("a.result__a[href], h2 a[href], a[href]"):
-            _add(a.get_text(" ", strip=True), a.get("href", ""))
-            if len(results) >= num:
-                break
+        try:
+            resp = _get(url, lang, extra_headers=_DDG_FORM_HEADERS)
+        except Exception as exc:
+            log.warning("[DDG/%s] Request failed: %s", tag, exc)
+            continue
+
+        if debug:
+            with open(f"debug_ddg_{tag}.html", "w", encoding="utf-8") as handle:
+                handle.write(resp.text)
+            log.debug("[DDG/%s] Status %s, %s bytes", tag, resp.status_code, len(resp.text))
+
+        if resp.status_code in (202, 429):
+            # Shared budget: poking the other host would just collect a second
+            # refusal from a provider that has already said no. Stop here.
+            rate_limited = resp
+            log.debug("[DDG/%s] rate limited (HTTP %s)", tag, resp.status_code)
+            break
+        if resp.status_code != 200:
+            log.warning("[DDG/%s] HTTP %s", tag, resp.status_code)
+            continue
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        if tag == "lite":
+            _parse_ddg_lite(soup, _add, num, results)
+        else:
+            for div in soup.select("div.result, div.web-result"):
+                a = div.select_one("a.result__a")
+                if not a:
+                    continue
+                sn = div.select_one("a.result__snippet, div.result__snippet")
+                _add(a.get_text(strip=True), a.get("href", ""), sn.get_text(strip=True) if sn else "")
+                if len(results) >= num:
+                    break
+
+            if not results:
+                for a in soup.select("a.result__a[href], h2 a[href], a[href]"):
+                    _add(a.get_text(" ", strip=True), a.get("href", ""))
+                    if len(results) >= num:
+                        break
+
+    if not results and rate_limited is not None:
+        _start_provider_cooldown("ddg", rate_limited)
+        return []
 
     had_parsed_results = bool(results)
     results = _prepare_source_results(query, results, "ddg")
