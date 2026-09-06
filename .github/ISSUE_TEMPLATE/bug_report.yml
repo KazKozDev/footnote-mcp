@@ -1,0 +1,79 @@
+name: Bug report
+description: Something does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most problems here turn out to be environment-specific — a missing Chromium or
+        `tesseract`, no local Ollama, or a search provider rate-limiting your IP. The health
+        check below usually identifies which, so please run it first.
+
+  - type: textarea
+    id: health
+    attributes:
+      label: startup_health_check output
+      description: >
+        Ask your MCP client to run the `startup_health_check` tool and paste the JSON. It
+        reports the extractors, PDF and spreadsheet parsers, browser, OCR and cache directory.
+      render: json
+      placeholder: '{"ok": true, "checks": {...}}'
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you asked for, what the tool did, and what you expected instead.
+    validations:
+      required: true
+
+  - type: input
+    id: tool
+    attributes:
+      label: Which tool
+      description: The tool that misbehaved, e.g. web_deep_search, web_extract_tables.
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >
+        The query or URL, if you can share it. A URL that fails for you is far more useful
+        than a description of it failing.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `pip show footnote-mcp`, or the image tag if you use Docker.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: How do you run it
+      options:
+        - stdio through an MCP client
+        - Docker
+        - Hosted HTTP endpoint
+        - From source
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Python version
+      placeholder: macOS 15.2, Python 3.12
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server output
+      description: >
+        Anything the server printed to stderr. Lines tagged `[DDG]`, `[BING]` or `[BRAVE]`
+        about cooldowns explain most empty search results.
+      render: shell

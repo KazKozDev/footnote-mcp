@@ -178,6 +178,6 @@ RUN_LIVE_WEB_TESTS=1 python -m pytest -m live    # opt-in live search
 
 [![tests](https://img.shields.io/github/actions/workflow/status/KazKozDev/footnote-mcp/tests.yml?style=flat-square&label=tests)](https://github.com/KazKozDev/footnote-mcp/actions/workflows/tests.yml) [![PyPI](https://img.shields.io/pypi/v/footnote-mcp?style=flat-square)](https://pypi.org/project/footnote-mcp/) [![Python](https://img.shields.io/badge/python-3.10%2B-333?style=flat-square)](pyproject.toml) [![License](https://img.shields.io/badge/license-MIT-333?style=flat-square)](LICENSE)
 
-[Issues](https://github.com/KazKozDev/footnote-mcp/issues) · [Tools](docs/tools.md) · [Search backends](docs/search-backends.md) · [Fetching](docs/fetching.md) · [Hosting](docs/hosting.md) · [Benchmarks](benchmarks/REPORT.md) · [License](LICENSE) · [LinkedIn](https://www.linkedin.com/in/kazkozdev)
+[Issues](https://github.com/KazKozDev/footnote-mcp/issues) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [LICENSE](LICENSE) · [Tools](docs/tools.md) · [Hosting](docs/hosting.md) · [Benchmarks](benchmarks/REPORT.md) · [LinkedIn](https://www.linkedin.com/in/kazkozdev)
 
 </div>

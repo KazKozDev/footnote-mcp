@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/KazKozDev/footnote-mcp/security/advisories/new
+    about: Report privately instead of opening a public issue.
+  - name: Empty search results
+    url: https://github.com/KazKozDev/footnote-mcp/blob/main/docs/search-backends.md#surviving-a-rate-limit
+    about: Usually a provider rate limit. Read this before filing.
