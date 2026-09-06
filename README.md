@@ -28,50 +28,35 @@ python -m playwright install chromium   # browser tier for JS-heavy and blocked 
 {"mcpServers": {"footnote": {"command": "footnote-mcp"}}}
 ```
 
-No API keys are needed to start. Ask the client to run `startup_health_check` to see what
-this install can actually do (output trimmed):
-
-```json
-{"ok": true, "checks": {
-  "trafilatura": {"ok": true}, "playwright": {"ok": true}, "pdfplumber": {"ok": true},
-  "tesseract_binary": {"ok": true, "path": "/opt/homebrew/bin/tesseract"},
-  "cache_dir": {"ok": true, "path": "/Users/you/.footnote-mcp/source_cache"}}}
-```
+No API keys are needed to start. Restart the client and ask it to run `startup_health_check`:
+it reports, one line each, whether the extractors, the PDF and spreadsheet parsers, the
+browser, OCR and the cache directory are usable on this machine — so a missing optional piece
+shows up now rather than halfway through a research task.
 
 ## Search the web without configuring an API key
 
-`web_search` queries the zero-key providers — Bing, DuckDuckGo, Brave, Wiby — alongside any
-keyed provider you configured, then deduplicates and merges them into one ranking. Each result
-records which engines returned it, so agreement across independent indexes is visible rather
-than assumed. Snippets count as discovery only; nothing here is evidence yet.
+Ask the assistant to look something up and `web_search` queries the zero-key providers — Bing,
+DuckDuckGo, Brave, Wiby — alongside any keyed provider you configured, then deduplicates and
+merges them into one ranking.
 
-```json
-{
-  "provider": "auto", "count": 2,
-  "results": [{
-    "title": "Almost every new car sold in Norway is electric - Our World in Data",
-    "url": "https://ourworldindata.org/data-insights/almost-every-new-car-sold-in-norway-is-electric",
-    "score": 1.444, "engines": ["brave", "ddg"]
-  }]
-}
-```
+Every result carries the engines that returned it, so a page two independent indexes agree on
+is distinguishable from one only a single engine found, and a relevance score. Snippets count
+as discovery only: nothing at this stage is evidence yet, which is what the next two sections
+are for.
 
 Provider routing, keys, and semantic reranking: [docs/search-backends.md](docs/search-backends.md).
 
 ## Extract tables and files from a page into structured rows
 
-`web_extract_tables` parses HTML tables into `columns`/`rows` carrying the source URL.
-`web_detect_downloads`, `web_parse_file`, and `web_fetch_json` cover the CSV/XLS/XLSX/PDF/JSON
-a page links instead of rendering. From a Wikipedia revenue table, `max_rows: 3`:
+`web_extract_tables` turns a page's HTML tables into named columns and rows, each set tagged
+with the URL it came from and with the true total, so a truncated answer says so instead of
+looking complete. Point it at a Wikipedia revenue table and you get `Rank`, `Name`,
+`Industry`, `Revenue`, `Employees` as fields you can sort and compare, not a wall of text to
+re-read.
 
-```json
-{
-  "columns": ["Rank", "Name", "Industry", "Revenue (USD millions)", "Employees"],
-  "rows": [{"Rank": "1", "Name": "Walmart", "Industry": "Retail",
-            "Revenue (USD millions)": "680,985", "Employees": "2,100,000"}],
-  "row_count": 3, "total_row_count": 100, "truncated": true
-}
-```
+Data a page links rather than renders is covered too: `web_detect_downloads` finds the
+CSV/TSV/XLS/XLSX/PDF/JSON attached to it, `web_parse_file` parses them, and `web_fetch_json`
+takes an API endpoint directly.
 
 ## Verify that a source actually supports a claim
 
@@ -79,9 +64,10 @@ The part a plain search tool does not do. `evidence_entailment` compares a claim
 text and returns a verdict; `corroborate_claim` triangulates across excerpts, and
 `locate_claim_span` returns the supporting sentence with character offsets.
 
-Claim: *"Norway's battery-electric share of new passenger cars was 82.4% in 2023."*
-Source excerpt: *"In 2023, battery-electric vehicles accounted for 82.4% of all new passenger
-cars registered in Norway, up from 79.3% in 2022."*
+Given the claim *"Norway's battery-electric share of new passenger cars was 82.4% in 2023"*
+and a source reading *"In 2023, battery-electric vehicles accounted for 82.4% of all new
+passenger cars registered in Norway"*, the verdict comes back as a value your agent can act
+on rather than a paragraph it has to interpret:
 
 ```json
 {"status": "supported", "score": 0.778, "reason": "token overlap heuristic", "backend": "heuristic"}
