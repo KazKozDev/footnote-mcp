@@ -163,7 +163,7 @@ Full parameters and schemas: [docs/tools.md](docs/tools.md).
 - Python 3.10 or newer, on macOS, Linux or Windows — CI runs all six combinations
 - Chromium via `python -m playwright install chromium`, for the browser tier and browser tools
 - Any MCP client speaking stdio; config is documented for Claude Desktop and Cursor
-- Optional: a local Ollama for `semantic: true` and the `ollama` entailment backend
+- Optional, for `semantic: true`: an Ollama daemon, or `requirements-embed.txt` to run the same bge-m3 weights in-process — the only option where no daemon exists, such as Docker
 - Optional: the system `tesseract` binary for OCR in `web_screenshot` and scanned PDFs
 - No API keys, no account, no hosted service
 
@@ -172,7 +172,7 @@ Full parameters and schemas: [docs/tools.md](docs/tools.md).
 - The offline entailment heuristic scores 100% on numeric and factual claims but 83% overall on the labelled set; purely semantic negation and paraphrase need `backend="ollama"`.
 - The benchmark runner has no hard per-task timeout on Windows: it is built on `signal.setitimer`, which Windows lacks, so a hung task there runs unguarded. The server itself is unaffected.
 - Zero-key providers are scraped, so results vary by IP. A refused search retries through a proxy and, for Bing and Brave, headless Chromium; DuckDuckGo answers Chromium with an error stub, so there it is cooldown or nothing.
-- Semantic reranking is best-effort: with no Ollama reachable, the original ranking is returned unchanged.
+- Semantic reranking is best-effort: with no embedding runtime reachable, the original ranking is returned unchanged.
 - Generated recipes run in a subprocess that may import only `csv`, `datetime`, `html`, `json`, `math`, `re` and `statistics`, with `eval`, `exec`, `open` and `__import__` rejected — a validator, not a hardened sandbox.
 - The hosted HTTP server holds per-user rate limits in memory; they reset on restart.
 
@@ -199,7 +199,8 @@ Every variable is optional. The free tier (Bing, DuckDuckGo, Brave, Wiby) answer
 | `FOOTNOTE_PROVIDER_STRATEGY` | `merge` calls all providers; `cost_aware` calls metered only if needed | `cost_aware` |
 | `GITHUB_TOKEN` | `github_search` runs at authenticated rate limits | Unauthenticated rate limits |
 | `FOOTNOTE_RESEARCH_MODEL` | Ollama model for query planning and fact extraction in `web_deep_search` | Runs without planner |
-| `FOOTNOTE_EMBED_MODEL` | Ollama model for `semantic: true` reranking | `bge-m3` |
+| `FOOTNOTE_EMBED_MODEL` | Embedding model for `semantic: true` reranking | `bge-m3` |
+| `FOOTNOTE_EMBED_BACKEND` | `ollama` needs the daemon; `local` loads the same weights in-process (`requirements-embed.txt`) | `auto`: daemon if running, else in-process, else ranking is unchanged |
 | `FOOTNOTE_BROWSER_FALLBACK` | `0` disables Chromium browser fallback | Enabled |
 | `FOOTNOTE_SEARCH_CACHE_TTL` | Search cache TTL in seconds (`0` disables) | `86400` |
 | `FOOTNOTE_PROXIES` | Comma-separated proxy URLs for requests | Direct connections |

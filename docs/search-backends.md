@@ -74,9 +74,17 @@ unresolved requirements, per-iteration diagnostics, and the cumulative funnel
 ## Semantic reranking
 
 Pass `semantic: true` to `web_search` to reorder by meaning rather than keyword overlap: it
-over-fetches, embeds query and results with a local Ollama model, and sorts by cosine
-similarity (each result gains `semantic_score`). Best-effort — if Ollama is unavailable the
-original order is returned. Model: `FOOTNOTE_EMBED_MODEL` (default `bge-m3`).
+over-fetches, embeds query and results with bge-m3, and sorts by cosine similarity (each
+result gains `semantic_score`). Best-effort — with no embedding runtime available the original
+order is returned.
+
+The weights are the same either way; only the runtime differs. `FOOTNOTE_EMBED_BACKEND=ollama`
+talks to a running daemon, which costs nothing extra where one is already installed.
+`local` loads `BAAI/bge-m3` through transformers inside the server process — install
+`requirements-embed.txt` first. That path needs no daemon, which makes it the only one that
+works in the Docker image or on a hosted instance. `auto` (the default) tries the daemon and
+falls back to in-process. Model name: `FOOTNOTE_EMBED_MODEL` (default `bge-m3`, mapped to
+`BAAI/bge-m3` for the in-process backend).
 
 ## Surviving a rate limit
 

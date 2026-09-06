@@ -83,3 +83,45 @@ def test_semantic_rerank_graceful_on_failure(monkeypatch):
 
 def test_semantic_rerank_empty():
     assert semantic.semantic_rerank("q", []) == []
+
+
+# ── embedding backend selection ──
+
+def test_embed_backend_local_never_touches_the_daemon(monkeypatch):
+    monkeypatch.setenv("FOOTNOTE_EMBED_BACKEND", "local")
+    monkeypatch.setattr(
+        semantic, "_embed_texts_ollama",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("daemon must not be called")),
+    )
+    monkeypatch.setattr(semantic, "_embed_texts_local", lambda texts, model=None: [[0.5] * 4 for _ in texts])
+    assert semantic.embed_texts(["a", "b"]) == [[0.5] * 4, [0.5] * 4]
+
+
+def test_embed_backend_ollama_never_falls_back(monkeypatch):
+    monkeypatch.setenv("FOOTNOTE_EMBED_BACKEND", "ollama")
+    monkeypatch.setattr(
+        semantic, "_embed_texts_ollama",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("daemon down")),
+    )
+    monkeypatch.setattr(
+        semantic, "_embed_texts_local",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not fall back when pinned")),
+    )
+    with pytest.raises(RuntimeError):
+        semantic.embed_texts(["a"])
+
+
+def test_embed_backend_auto_falls_back_to_in_process(monkeypatch):
+    monkeypatch.setenv("FOOTNOTE_EMBED_BACKEND", "auto")
+    monkeypatch.setattr(
+        semantic, "_embed_texts_ollama",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no daemon here")),
+    )
+    monkeypatch.setattr(semantic, "_embed_texts_local", lambda texts, model=None: [[1.0] for _ in texts])
+    assert semantic.embed_texts(["a", "b"]) == [[1.0], [1.0]]
+
+
+def test_local_model_id_maps_the_ollama_tag_to_the_hub_repo():
+    assert semantic._local_model_id("bge-m3") == "BAAI/bge-m3"
+    assert semantic._local_model_id("bge-m3:latest") == "BAAI/bge-m3"
+    assert semantic._local_model_id("some/other-model") == "some/other-model"

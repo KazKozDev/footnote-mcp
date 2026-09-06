@@ -1,0 +1,4 @@
+# Optional: in-process embedding backend for semantic reranking
+# (FOOTNOTE_EMBED_BACKEND=local). Same BAAI/bge-m3 weights the ollama tag serves.
+transformers>=4.45
+torch>=2.0

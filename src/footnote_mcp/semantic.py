@@ -1,8 +1,15 @@
-"""Semantic (embedding) reranking via a local ollama embedding model (bge-m3).
+"""Semantic (embedding) reranking with bge-m3.
 
 Keyword search engines rank by lexical overlap; this reorders their results by
 *meaning* — cosine similarity between the query and each result in bge-m3 space.
-Best-effort: if ollama or the model is unavailable, callers get the original order.
+
+Two runtimes serve the same model. ``ollama`` (the default) talks to a running
+daemon, which costs nothing extra where one is already installed. ``local`` loads
+``BAAI/bge-m3`` through transformers in this process, which needs no daemon at
+all — the only option inside a container, where the default silently cannot work.
+``FOOTNOTE_EMBED_BACKEND`` chooses; ``auto`` tries the daemon and falls back.
+
+Best-effort throughout: if no runtime is available, callers get the original order.
 """
 
 from __future__ import annotations
@@ -23,15 +30,52 @@ def embed_model() -> str:
     return os.getenv("FOOTNOTE_EMBED_MODEL", "bge-m3")
 
 
-def embed_texts(texts, model=None, timeout=30):
-    """Embed a list of texts with the ollama embedding model.
+def embed_backend() -> str:
+    return (os.getenv("FOOTNOTE_EMBED_BACKEND", "auto") or "auto").strip().lower()
+
+
+def _local_model_id(model: str | None) -> str:
+    """Ollama's short tag and the Hub repo id name the same weights."""
+    name = model or embed_model()
+    return "BAAI/bge-m3" if name in ("bge-m3", "bge-m3:latest") else name
+
+
+_LOCAL_CACHE: dict = {}
+
+
+def _embed_texts_local(texts, model=None):
+    """Embed in-process with transformers. CLS pooling, L2-normalised, as bge-m3 expects."""
+    try:
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError(
+            "local embedding backend needs transformers and torch: "
+            "pip install -r requirements-embed.txt"
+        ) from exc
+
+    model_id = _local_model_id(model)
+    if model_id not in _LOCAL_CACHE:
+        log.info("[SEMANTIC] loading %s in-process (first call downloads the weights)", model_id)
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        net = AutoModel.from_pretrained(model_id)
+        net.eval()
+        _LOCAL_CACHE[model_id] = (tokenizer, net)
+    tokenizer, net = _LOCAL_CACHE[model_id]
+
+    batch = tokenizer(list(texts), padding=True, truncation=True, max_length=512, return_tensors="pt")
+    with torch.no_grad():
+        hidden = net(**batch).last_hidden_state[:, 0]          # CLS token
+        hidden = torch.nn.functional.normalize(hidden, p=2, dim=1)
+    return hidden.tolist()
+
+
+def _embed_texts_ollama(texts, model=None, timeout=30):
+    """Embed through the ollama daemon.
 
     Tries the batch ``/api/embed`` endpoint first, falling back to the singular
     ``/api/embeddings`` (one call per text) for older ollama builds.
     """
-    texts = list(texts)
-    if not texts:
-        return []
     model = model or embed_model()
     host = _ollama_host()
 
@@ -54,6 +98,23 @@ def embed_texts(texts, model=None, timeout=30):
             raise RuntimeError("no embedding returned")
         out.append(embedding)
     return out
+
+
+def embed_texts(texts, model=None, timeout=30):
+    """Embed a list of texts with whichever runtime is configured and available."""
+    texts = list(texts)
+    if not texts:
+        return []
+    backend = embed_backend()
+    if backend == "local":
+        return _embed_texts_local(texts, model=model)
+    if backend == "ollama":
+        return _embed_texts_ollama(texts, model=model, timeout=timeout)
+    try:
+        return _embed_texts_ollama(texts, model=model, timeout=timeout)
+    except Exception as exc:
+        log.info("[SEMANTIC] ollama unavailable (%s); trying the in-process backend", exc)
+        return _embed_texts_local(texts, model=model)
 
 
 def _cosine(a, b) -> float:
