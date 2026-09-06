@@ -4,7 +4,9 @@ Search, extract data, and verify every claim against the source page.
 
 [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=footnote&config=eyJjb21tYW5kIjoiZm9vdG5vdGUtbWNwIn0%3D) · [Claude Desktop setup](#quick-start)
 
-<video src="https://github.com/user-attachments/assets/47f66267-0210-47a7-8c21-12a889aeebb0" controls muted playsinline width="820"></video>
+<video src="https://github.com/user-attachments/assets/47f66267-0210-47a7-8c21-12a889aeebb0" controls muted playsinline width="820">
+  <img src="https://raw.githubusercontent.com/KazKozDev/footnote-mcp/main/assets/demo.gif" alt="footnote-mcp searching the web, extracting data, and verifying each claim against its source" width="820">
+</video>
 
 Runs without API keys · 45 tools · MIT licensed
 
