@@ -104,6 +104,11 @@ called only when the free tier comes back with fewer than `FOOTNOTE_MIN_FREE_RES
 matches, and then just one of them, rotating between whichever are configured so a single
 quota does not drain first. Paid search here is the fallback, not the default.
 
+So keys are worth having but nothing breaks without them. With none set there is simply no
+tier to fall back on: most queries are unaffected, and the narrow or obscure ones — where the
+free engines return two weak hits instead of ten — stay thin rather than being topped up.
+That is the whole difference a key buys.
+
 | Variable | Effect when set | Effect when unset |
 |---|---|---|
 | `FOOTNOTE_SEARXNG_URL` | Self-hosted SearXNG joins the free tier, unmetered | Free tier is Bing, DuckDuckGo, Brave, Wiby |
