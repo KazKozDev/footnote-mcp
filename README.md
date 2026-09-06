@@ -92,9 +92,15 @@ query → merged discovery → fetch ladder → extract (text · tables · files
 
 ## Configuration
 
-| Option | Default | What it does |
-|---|---|---|
-| `--headed` | off | Show the Chromium window instead of running headless |
+The server takes one flag, `--headed`, which shows the Chromium window instead of running it
+invisibly — useful for watching the browser tier work on a page that keeps failing. Your MCP
+client launches the server, so it goes in the client config rather than a terminal:
+
+```json
+{"mcpServers": {"footnote": {"command": "footnote-mcp", "args": ["--headed"]}}}
+```
+
+Everything else is configured through the environment.
 
 ### Environment variables
 
