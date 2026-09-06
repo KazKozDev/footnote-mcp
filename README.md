@@ -1,8 +1,4 @@
-<p align="center">
-  <img src=".github/banner.png" alt="footnote-mcp" width="350">
-</p>
 
-<!-- mcp-name: io.github.KazKozDev/footnote-mcp -->
 
 An MCP server for source-grounded web research. It searches the web, fetches and
 extracts pages, pulls structured data out of tables/files/APIs, and — the part that
@@ -408,6 +404,12 @@ RUN_LIVE_WEB_TESTS=1 python -m pytest -m live
 
 CI runs the same suite (`.github/workflows/tests.yml`).
 
-## License
+
+
+<p align="center">
+  <img src=".github/banner.png" alt="footnote-mcp" width="350">
+</p>
+
+<!-- mcp-name: io.github.KazKozDev/footnote-mcp -->
 
 MIT — see [LICENSE](LICENSE).
