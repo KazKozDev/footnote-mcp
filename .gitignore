@@ -22,3 +22,6 @@ benchmarks/results/
 *.mov
 *.mp4
 
+
+# Standalone antibloc_ddg CLI log
+duckduckgo_search.log
