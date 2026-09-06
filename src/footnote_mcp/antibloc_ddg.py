@@ -1,3 +1,14 @@
+"""Standalone DuckDuckGo scraper, kept as a CLI experiment.
+
+Nothing in the MCP server imports this module; the server's own escalation
+ladder lives in ``scraper.py``. ``requests`` and ``selenium`` are therefore not
+declared runtime dependencies, and both are imported lazily so that importing
+this module never fails on an ordinary install. Using a code path that needs one
+raises a ``RuntimeError`` naming what to install.
+"""
+
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -8,30 +19,45 @@ import sys
 import time
 import urllib.parse
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-import requests
 from bs4 import BeautifulSoup
 
-# Selenium imports
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+try:  # optional: `pip install requests`
+    import requests
+except ImportError:  # pragma: no cover - exercised only without the extra
+    requests = None  # type: ignore[assignment]
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("duckduckgo_search.log", encoding="utf-8"),
-    ],
-)
+try:  # optional: `pip install selenium`
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service as ChromeService
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, WebDriverException
+except ImportError:  # pragma: no cover - exercised only without the extra
+    webdriver = ChromeService = ChromeOptions = By = WebDriverWait = EC = None  # type: ignore[assignment]
+
+    class TimeoutException(Exception):  # type: ignore[no-redef]
+        """Placeholder so ``except`` clauses stay valid without selenium."""
+
+    class WebDriverException(Exception):  # type: ignore[no-redef]
+        """Placeholder so ``except`` clauses stay valid without selenium."""
+
+
 logger = logging.getLogger("duckduckgo_searcher")
+
+
+def _require(module: Any, name: str) -> Any:
+    """Return `module`, or explain which optional dependency is missing."""
+    if module is None:
+        raise RuntimeError(
+            f"{name} is required for this code path but is not installed. "
+            f"Install it with: pip install {name}"
+        )
+    return module
 
 # Constants
 USER_AGENTS = [
@@ -41,7 +67,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
 ]
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+CACHE_DIR = str(
+    Path(os.getenv("FOOTNOTE_DDG_CACHE", "~/.footnote-mcp/ddg_cache")).expanduser()
+)
 CACHE_EXPIRATION = timedelta(hours=24)
 
 class DuckDuckGoSearcher:
@@ -64,13 +92,14 @@ class DuckDuckGoSearcher:
         self.use_selenium = use_selenium
         self.chromedriver_path = chromedriver_path
 
-        if use_cache and not os.path.exists(CACHE_DIR):
-            os.makedirs(CACHE_DIR)
+        if use_cache:
+            os.makedirs(CACHE_DIR, exist_ok=True)
 
         logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
-    def _get_selenium_driver(self) -> Optional[webdriver.Chrome]:
+    def _get_selenium_driver(self) -> Optional["webdriver.Chrome"]:
         """Initializes and returns a Selenium WebDriver instance."""
+        _require(webdriver, "selenium")
         chrome_options = ChromeOptions()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
@@ -244,8 +273,9 @@ class DuckDuckGoSearcher:
 
         return self._extract_lite_results(html_content) if html_content else []
 
-    def _make_request_requests(self, url: str) -> Optional[requests.Response]:
+    def _make_request_requests(self, url: str) -> Optional["requests.Response"]:
         """Make an HTTP request with retries using `requests` library."""
+        _require(requests, "requests")
         retry_count = 0
         proxies = None
         
@@ -473,6 +503,17 @@ def save_results_to_json(results: List[Dict], filename: str) -> bool:
 
 def main() -> None:
     """Main function for the script."""
+    # Configured here rather than at import time: importing this module must not
+    # create a log file in whatever directory the process happens to run in.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler("duckduckgo_search.log", encoding="utf-8"),
+        ],
+    )
+
     parser = argparse.ArgumentParser(description="DuckDuckGo Search without Blocking")
     parser.add_argument("query", nargs="*", help="Search query (prompted if not provided)")
     parser.add_argument("--proxy", "-p", action="store_true", help="Use proxy rotation (requires setup)")
