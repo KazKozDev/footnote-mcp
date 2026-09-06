@@ -1,10 +1,19 @@
-"""Standalone DuckDuckGo scraper, kept as a CLI experiment.
+"""Standalone DuckDuckGo scraper — a CLI experiment, not part of the server.
 
-Nothing in the MCP server imports this module; the server's own escalation
-ladder lives in ``scraper.py``. ``requests`` and ``selenium`` are therefore not
-declared runtime dependencies, and both are imported lazily so that importing
-this module never fails on an ordinary install. Using a code path that needs one
-raises a ``RuntimeError`` naming what to install.
+It lives outside ``src/`` so it is not packaged: it needs ``requests`` and
+``selenium``, neither of which is a runtime dependency, and nothing in the MCP
+server imports it. The server's own escalation ladder is in
+``src/footnote_mcp/scraper.py``, and the anti-blocking ideas worth keeping from
+here — the search-page Referer, the lite endpoint, proxy retries and a browser
+tier — now live in ``src/footnote_mcp/search.py``.
+
+Run it directly:
+
+    pip install requests selenium
+    python scripts/ddg_scraper.py "your query"
+
+Both imports are lazy, so the file can be read and linted without them; a code
+path that needs one raises a RuntimeError naming what to install.
 """
 
 from __future__ import annotations

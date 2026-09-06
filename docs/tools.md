@@ -68,6 +68,10 @@ Recipe code may import only `csv`, `datetime`, `html`, `json`, `math`, `re`, and
 `globals`, `locals`, `vars`, `input`, and `breakpoint` are rejected by the validator
 ([`tools_data/sandbox.py`](../src/footnote_mcp/tools_data/sandbox.py)).
 
+A standalone DuckDuckGo scraper kept as a CLI experiment lives in
+[`scripts/ddg_scraper.py`](../scripts/ddg_scraper.py); it is not packaged and
+the server does not use it.
+
 ## Browser fallback (10)
 
 A controlled Chromium session for JS-heavy or interactive pages:
