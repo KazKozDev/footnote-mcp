@@ -2,7 +2,7 @@
 
 Search, extract data, and verify every claim against the source page.
 
-[Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=footnote&config=eyJjb21tYW5kIjoiZm9vdG5vdGUtbWNwIn0%3D) · [Claude Desktop setup](#quick-start)
+[Add to Cursor](https://cursor.com/install-mcp?name=footnote&config=eyJjb21tYW5kIjoiZm9vdG5vdGUtbWNwIn0%3D) · [Claude Desktop setup](#quick-start)
 
 <video src="https://github.com/user-attachments/assets/47f66267-0210-47a7-8c21-12a889aeebb0" controls muted playsinline width="820">
   <img src="https://raw.githubusercontent.com/KazKozDev/footnote-mcp/main/assets/demo.gif" alt="footnote-mcp searching the web, extracting data, and verifying each claim against its source" width="820">
@@ -175,8 +175,6 @@ RUN_LIVE_WEB_TESTS=1 python -m pytest -m live    # opt-in live search
 <div align="center">
 
 ![Claude Desktop](https://img.shields.io/badge/Claude_Desktop-333?style=flat-square&logo=anthropic&logoColor=fff) ![Cursor](https://img.shields.io/badge/Cursor-333?style=flat-square&logo=cursor&logoColor=fff)
-
-![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff) ![Linux](https://img.shields.io/badge/Linux-333?style=flat-square&logo=linux&logoColor=fff) ![Windows](https://img.shields.io/badge/Windows-333?style=flat-square&logo=windows&logoColor=fff)
 
 [![tests](https://img.shields.io/github/actions/workflow/status/KazKozDev/footnote-mcp/tests.yml?style=flat-square&label=tests)](https://github.com/KazKozDev/footnote-mcp/actions/workflows/tests.yml) [![PyPI](https://img.shields.io/pypi/v/footnote-mcp?style=flat-square)](https://pypi.org/project/footnote-mcp/) [![Python](https://img.shields.io/badge/python-3.10%2B-333?style=flat-square)](pyproject.toml) [![License](https://img.shields.io/badge/license-MIT-333?style=flat-square)](LICENSE)
 
