@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.KazKozDev/footnote-mcp",
-  "description": "Source-grounded web research: search, extraction, verification, and browser automation.",
+  "description": "Web research MCP server with claim verification — 45 tools for Claude Desktop and Cursor",
   "title": "footnote-mcp",
   "version": "0.2.6",
   "repository": {

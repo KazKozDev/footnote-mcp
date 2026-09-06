@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "footnote-mcp"
 version = "0.2.6"
-description = "MCP server for source-grounded web research: search, structured-data extraction, evidence verification, and browser automation."
+description = "Web research MCP server with claim verification — 45 tools for Claude Desktop and Cursor"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
