@@ -30,6 +30,10 @@ JavaScript-rendered pages.
 | `FOOTNOTE_HTTP_CACHE_MAX_BYTES` | `1000000` | Largest body kept for revalidation. |
 | `FOOTNOTE_THIN_CONTENT_CHARS` | `200` | Below this extracted length, a script-heavy page counts as a JS shell. |
 
+Search requests use the same ladder in a reduced form: a refused search page is
+retried through a proxy, and for Bing and Brave rendered in Chromium. See
+[search-backends.md](search-backends.md#surviving-a-rate-limit).
+
 The rate limit, circuit breaker, and negative cache apply to **every** outbound request, not
 only to pages fetched through the ladder: they live in
 [`politeness.py`](../src/footnote_mcp/politeness.py) and are taken inside `fetch._get`, which

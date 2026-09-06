@@ -659,3 +659,109 @@ def test_a_time_boxed_free_tier_asks_only_the_engine_that_can_filter(monkeypatch
     search._run_free_providers("q", 5, "en", False, freshness="day")
 
     assert asked == [("ddg", "d")]
+
+
+# ── search-result cache, proxy and browser escalation ──
+
+class _Resp:
+    def __init__(self, status_code=200, text="", headers=None):
+        self.status_code = status_code
+        self.text = text
+        self.headers = headers or {}
+
+
+def _ddg_page(query):
+    return (
+        f'<div class="result"><a class="result__a" href="https://ok.example/a">{query} guide</a>'
+        f'<a class="result__snippet">all about {query}</a></div>'
+    )
+
+
+def test_search_cache_serves_repeat_query_without_a_request(monkeypatch, tmp_path):
+    monkeypatch.setenv("FOOTNOTE_SEARCH_CACHE", str(tmp_path))
+    monkeypatch.setenv("FOOTNOTE_SEARCH_CACHE_TTL", "3600")
+    calls = []
+    monkeypatch.setattr(
+        search, "_get",
+        lambda url, *a, **k: (calls.append(url), _Resp(200, _ddg_page("postgres vacuum")))[1],
+    )
+
+    first = search.search_ddg("postgres vacuum", num=3)
+    assert first and len(calls) == 1
+
+    second = search.search_ddg("postgres vacuum", num=3)
+    assert second == first
+    assert len(calls) == 1, "a cached query must not reach the network"
+
+    search.search_ddg("something else", num=3)
+    assert len(calls) == 2, "a different query must not be served from the first one's entry"
+
+
+def test_search_cache_never_stores_a_block(monkeypatch, tmp_path):
+    monkeypatch.setenv("FOOTNOTE_SEARCH_CACHE", str(tmp_path))
+    monkeypatch.setenv("FOOTNOTE_SEARCH_CACHE_TTL", "3600")
+    monkeypatch.setattr(search, "_get", lambda url, *a, **k: _Resp(202))
+    assert search.search_ddg("kafka rebalance", num=3) == []
+
+    search.reset_state()
+    calls = []
+    monkeypatch.setattr(
+        search, "_get",
+        lambda url, *a, **k: (calls.append(url), _Resp(200, _ddg_page("kafka rebalance")))[1],
+    )
+    assert search.search_ddg("kafka rebalance", num=3)
+    assert calls, "a refusal must not be cached as an empty result set"
+
+
+def test_refused_search_retries_through_a_proxy(monkeypatch):
+    monkeypatch.setenv("FOOTNOTE_PROXIES", "http://proxy.invalid:8080")
+    attempts = []
+
+    def fake_get(url, lang="en", **kwargs):
+        if kwargs.get("proxies"):
+            attempts.append("proxy")
+            return _Resp(200, _ddg_page("proxy probe"))
+        attempts.append("direct")
+        return _Resp(202)
+
+    monkeypatch.setattr(search, "_get", fake_get)
+    assert search.search_ddg("proxy probe", num=3)
+    assert attempts == ["direct", "proxy"]
+
+
+def test_browser_tier_is_used_for_bing_but_not_duckduckgo(monkeypatch):
+    """DuckDuckGo serves Chromium an error stub, so it opts out of the tier."""
+    from footnote_mcp import scraper
+
+    monkeypatch.setenv("FOOTNOTE_BROWSER_FALLBACK", "1")
+    attempts = []
+    monkeypatch.setattr(
+        search, "_get", lambda url, *a, **k: (attempts.append("http"), _Resp(202))[1]
+    )
+    monkeypatch.setattr(
+        scraper._RENDERER, "render",
+        lambda url, lang="en", proxy=None, timeout=None: (
+            attempts.append("browser"), ('<li class="b_algo">x</li>' * 200, 200, None)
+        )[1],
+    )
+
+    search.search_ddg("no browser here", num=3)
+    assert attempts == ["http"]
+
+    search.reset_state()
+    attempts.clear()
+    search.search_bing("browser please", num=3)
+    assert attempts == ["http", "browser"]
+
+
+def test_browser_tier_rejects_a_too_small_page(monkeypatch):
+    from footnote_mcp import scraper
+
+    monkeypatch.setenv("FOOTNOTE_BROWSER_FALLBACK", "1")
+    monkeypatch.setattr(search, "_get", lambda url, *a, **k: _Resp(202))
+    monkeypatch.setattr(
+        scraper._RENDERER, "render",
+        lambda url, lang="en", proxy=None, timeout=None: ("<html><body>stub</body></html>", 200, None),
+    )
+    assert search.search_bing("tiny stub", num=3) == []
+    assert search._provider_on_cooldown("bing"), "an error stub must still trip the cooldown"

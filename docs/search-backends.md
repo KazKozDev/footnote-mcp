@@ -58,3 +58,33 @@ Pass `semantic: true` to `web_search` to reorder by meaning rather than keyword 
 over-fetches, embeds query and results with a local Ollama model, and sorts by cosine
 similarity (each result gains `semantic_score`). Best-effort — if Ollama is unavailable the
 original order is returned. Model: `FOOTNOTE_EMBED_MODEL` (default `bge-m3`).
+
+## Surviving a rate limit
+
+The scraped engines are free, which means their budget is a rate limit rather
+than a bill. Three things defend it.
+
+**Requests look like a search, not a typed URL.** Queries carry `Referer`,
+`Origin` and `Sec-Fetch-Site` for the engine's own domain. Measured against
+live DuckDuckGo from a cool IP at one request per second: 2 accepted without
+those headers, 7 with them.
+
+**Repeat queries are answered from disk.** Results from Bing, DuckDuckGo and
+Brave are cached for `FOOTNOTE_SEARCH_CACHE_TTL` seconds (default 86400) under
+`FOOTNOTE_SEARCH_CACHE` (default `~/.footnote-mcp/search_cache/`). A refusal is
+never cached, so a block does not turn into a day of empty answers.
+
+**A refusal escalates before it gives up.** A `202`/`429` is retried through a
+rotating proxy when `FOOTNOTE_PROXIES` is set, and then — for Bing and Brave —
+rendered in headless Chromium. Only when every tier is refused does the
+provider go into cooldown.
+
+DuckDuckGo deliberately skips the browser tier: `html.duckduckgo.com` and
+`lite.duckduckgo.com` answer Chromium with a 273-byte error stub, and the main
+site returns a shell with no result nodes, so rendering would trade a clean
+refusal for an empty page. Its two hosts also share one rate-limit budget — a
+lite request sent right after html refuses is refused too — so `lite` is only
+tried when html fails some other way.
+
+Cooldowns are written to `provider_cooldowns.json` in the source cache, so a
+restarted server does not walk straight back into a ban that is keyed to its IP.

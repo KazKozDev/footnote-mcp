@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import functools
+import hashlib
 import json
 import os
 import re
@@ -33,11 +35,13 @@ _PROVIDER_COOLDOWN_LOCK = threading.Lock()
 # Cooldowns also survive a restart: the ban lives at the provider, keyed to our
 # IP, so a fresh process must not walk straight back into it. Deadlines are
 # persisted as wall-clock epochs; the in-memory copy stays monotonic.
-_COOLDOWN_STATE_PATH = Path(
-    os.getenv("FOOTNOTE_SOURCE_CACHE", "~/.footnote-mcp/source_cache")
-).expanduser() / "provider_cooldowns.json"
 _PERSISTED_COOLDOWNS_LOADED = False
 _PERSISTED_COOLDOWN_UNTIL: dict[str, float] = {}
+
+
+def _cooldown_state_path() -> Path:
+    root = os.getenv("FOOTNOTE_SOURCE_CACHE", "").strip() or "~/.footnote-mcp/source_cache"
+    return Path(root).expanduser() / "provider_cooldowns.json"
 _PROVIDER_COOLDOWN_DEFAULTS = {"brave": 300.0, "ddg": 120.0}
 _PROVIDER_FALLBACK_COOLDOWN = 180.0
 # Engines that can rest. Used to tell "this one is resting" from "there is
@@ -63,7 +67,7 @@ def _load_persisted_cooldowns():
         return
     _PERSISTED_COOLDOWNS_LOADED = True
     try:
-        raw = json.loads(_COOLDOWN_STATE_PATH.read_text(encoding="utf-8"))
+        raw = json.loads(_cooldown_state_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
     if not isinstance(raw, dict):
@@ -83,8 +87,9 @@ def _save_persisted_cooldowns():
     now = time.time()
     live = {name: until for name, until in _PERSISTED_COOLDOWN_UNTIL.items() if until > now}
     try:
-        _COOLDOWN_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _COOLDOWN_STATE_PATH.write_text(json.dumps(live), encoding="utf-8")
+        path = _cooldown_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(live), encoding="utf-8")
     except OSError as exc:
         log.debug("[cooldown] could not persist state: %s", exc)
 
@@ -233,6 +238,180 @@ def _bing_unwrap_url(href):
     return href
 
 
+# ── Search-result cache ────────────────────────────────────────────────────
+#
+# A repeated query used to spend a fresh request against the provider's rate
+# limit for an answer we already had. Results are keyed by everything that can
+# change them and kept on disk, so the budget survives a restart too. Only
+# non-empty result sets are stored: a block must never be cached as "no hits".
+
+_SEARCH_CACHE_DEFAULT_TTL = 86400.0
+
+
+def _search_cache_dir() -> Path:
+    root = os.getenv("FOOTNOTE_SEARCH_CACHE", "").strip() or "~/.footnote-mcp/search_cache"
+    return Path(root).expanduser()
+
+
+def _search_cache_ttl() -> float:
+    try:
+        return max(0.0, float(os.getenv("FOOTNOTE_SEARCH_CACHE_TTL", _SEARCH_CACHE_DEFAULT_TTL)))
+    except (TypeError, ValueError):
+        return _SEARCH_CACHE_DEFAULT_TTL
+
+
+def _search_cache_key(engine, query, lang, num, extra="") -> str:
+    raw = "|".join(str(part) for part in (engine, query, lang, num, extra))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _search_cache_get(key):
+    ttl = _search_cache_ttl()
+    if ttl <= 0:
+        return None
+    path = _search_cache_dir() / f"{key}.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if time.time() - float(payload.get("stored_at", 0.0)) > ttl:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    results = payload.get("results")
+    return results if isinstance(results, list) and results else None
+
+
+def _search_cache_put(key, results):
+    if not results or _search_cache_ttl() <= 0:
+        return
+    try:
+        directory = _search_cache_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{key}.json").write_text(
+            json.dumps({"stored_at": time.time(), "results": results}), encoding="utf-8"
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        log.debug("[cache] could not store %s results: %s", key[:8], exc)
+
+
+def _cached_search(engine):
+    """Serve a scraped provider's results from disk when they are still fresh.
+
+    Applied to the scraped engines only: the keyed APIs are paid for and their
+    callers expect live answers, while these are the ones whose budget is a
+    rate limit we keep running into.
+    """
+    def wrap(fn):
+        @functools.wraps(fn)
+        def inner(query, num=None, lang="en", debug=False, **kwargs):
+            from . import core
+
+            resolved = core.NUM_PER_ENGINE if num is None else num
+            key = _search_cache_key(
+                engine, query, lang, resolved,
+                "&".join(f"{k}={v}" for k, v in sorted(kwargs.items())),
+            )
+            hit = _search_cache_get(key)
+            if hit is not None:
+                log.debug("[%s] cache hit for %r", engine.upper(), query)
+                return hit[:resolved]
+            results = fn(query, num=num, lang=lang, debug=debug, **kwargs)
+            _search_cache_put(key, results)
+            return results
+        return inner
+    return wrap
+
+
+# ── Escalation for a refused search request ────────────────────────────────
+#
+# The scraped engines used to give up on the first 202/429 and cool the
+# provider down for minutes. Two tiers already exist in scraper.py for pages;
+# a refused search page is the same problem, so they are reused here:
+# a proxy (a different exit address) and headless Chromium (a real browser
+# fingerprint executing the page's JavaScript).
+
+# Rendering a search page in Chromium only helps where the engine serves a real
+# page to a real browser. Measured against each endpoint:
+#   search.brave.com  -> 20 result snippets, parses
+#   www.bing.com      -> 10 li.b_algo, parses
+#   html/lite.duckduckgo.com -> a 273-byte "please email us" stub
+#   duckduckgo.com    -> 56 KB shell with no result nodes
+# So DuckDuckGo opts out: sending it through the browser would trade a clean
+# refusal for an empty page that parses to nothing and never trips the cooldown.
+_BROWSER_TIER_ENGINES = ("bing", "brave")
+
+# A rendered search page that is this small is an error stub, not results.
+_MIN_RENDERED_SEARCH_BYTES = 2000
+
+
+def _search_fetch(engine, url, lang="en", headers=None, debug=False):
+    """Fetch a search-results page. Returns (html, refusal).
+
+    `refusal` is the 202/429 response only when every tier was refused; the
+    caller cools the provider down on that. A non-refusal failure returns
+    (None, None) so the caller can try another endpoint.
+    """
+    from . import scraper
+
+    try:
+        resp = _get(url, lang, extra_headers=headers)
+    except Exception as exc:
+        log.warning("[%s] request failed: %s", engine.upper(), exc)
+        return None, None
+
+    if resp.status_code == 200:
+        return resp.text, None
+    if resp.status_code not in (202, 429):
+        log.warning("[%s] HTTP %s", engine.upper(), resp.status_code)
+        return None, None
+
+    refusal = resp
+    domain = urlparse(url).hostname or engine
+
+    # tier 2: a different exit address.
+    if scraper._proxy_enabled(None) and scraper._PROXIES.available():
+        proxy = scraper._PROXIES.get(domain, rotate=True)
+        if proxy:
+            try:
+                retry = _get(
+                    url, lang, extra_headers=headers, max_retries=1,
+                    proxies={"http": proxy, "https": proxy},
+                )
+            except Exception as exc:
+                scraper._PROXIES.report(proxy, ok=False)
+                log.debug("[%s] proxy attempt failed: %s", engine.upper(), exc)
+            else:
+                ok = retry.status_code == 200
+                scraper._PROXIES.report(proxy, ok=ok)
+                if ok:
+                    log.debug("[%s] answered through a proxy after HTTP %s", engine.upper(), refusal.status_code)
+                    return retry.text, None
+                refusal = retry if retry.status_code in (202, 429) else refusal
+
+    # tier 3: a real browser, for the engines that serve one a real page.
+    if engine.split("/")[0] in _BROWSER_TIER_ENGINES and scraper._browser_enabled(None):
+        html, _status, error = scraper._RENDERER.render(url, lang=lang)
+        if error:
+            log.debug("[%s] browser tier failed: %s", engine.upper(), error)
+        elif not html or len(html) < _MIN_RENDERED_SEARCH_BYTES:
+            log.debug("[%s] browser tier returned %s bytes; treating as refused",
+                      engine.upper(), len(html or ""))
+        elif scraper.detect_block(200, html)[0]:
+            log.debug("[%s] browser tier hit a block page", engine.upper())
+        else:
+            log.debug("[%s] answered through the browser tier after HTTP %s",
+                      engine.upper(), refusal.status_code)
+            return html, None
+
+    return None, refusal
+
+
+@_cached_search("bing")
 def search_bing(query, num=None, lang="en", debug=False):
     from . import core
 
@@ -248,27 +427,24 @@ def search_bing(query, num=None, lang="en", debug=False):
     if debug:
         log.debug("[BING] %s", url)
 
-    try:
-        resp = _get(url, lang)
-    except Exception as exc:
-        log.warning("[BING] Request failed: %s", exc)
+    html, refusal = _search_fetch("bing", url, lang, debug=debug)
+    if refusal is not None:
+        _start_provider_cooldown("bing", refusal)
+        return []
+    if not html:
         return []
 
     if debug:
         with open("debug_bing.html", "w", encoding="utf-8") as handle:
-            handle.write(resp.text)
-        log.debug("[BING] Status %s, %s bytes -> debug_bing.html", resp.status_code, len(resp.text))
+            handle.write(html)
+        log.debug("[BING] %s bytes -> debug_bing.html", len(html))
 
-    if resp.status_code != 200:
-        log.warning("[BING] HTTP %s", resp.status_code)
-        return []
-
-    response_text = resp.text.lower()
+    response_text = html.lower()
     if "one last step" in response_text and ("captcha" in response_text or "challenge" in response_text):
         log.warning("[BING] Blocked by anti-bot challenge for query %r", query)
         return []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     results = []
     seen = set()
 
@@ -367,6 +543,7 @@ def _parse_ddg_lite(soup, add, num, results):
             break
 
 
+@_cached_search("ddg")
 def search_ddg(query, num=None, lang="en", debug=False, df=""):
     from . import core
 
@@ -403,28 +580,23 @@ def search_ddg(query, num=None, lang="en", debug=False, df=""):
         if debug:
             log.debug("[DDG/%s] %s", tag, url)
 
-        try:
-            resp = _get(url, lang, extra_headers=_DDG_FORM_HEADERS)
-        except Exception as exc:
-            log.warning("[DDG/%s] Request failed: %s", tag, exc)
+        html, refusal = _search_fetch(f"ddg/{tag}", url, lang, headers=_DDG_FORM_HEADERS, debug=debug)
+
+        if refusal is not None:
+            # Shared budget across the two hosts, and every tier has already
+            # been tried. Poking the other endpoint would only collect a second
+            # refusal from a provider that has said no. Stop here.
+            rate_limited = refusal
+            break
+        if not html:
             continue
 
         if debug:
             with open(f"debug_ddg_{tag}.html", "w", encoding="utf-8") as handle:
-                handle.write(resp.text)
-            log.debug("[DDG/%s] Status %s, %s bytes", tag, resp.status_code, len(resp.text))
+                handle.write(html)
+            log.debug("[DDG/%s] %s bytes", tag, len(html))
 
-        if resp.status_code in (202, 429):
-            # Shared budget: poking the other host would just collect a second
-            # refusal from a provider that has already said no. Stop here.
-            rate_limited = resp
-            log.debug("[DDG/%s] rate limited (HTTP %s)", tag, resp.status_code)
-            break
-        if resp.status_code != 200:
-            log.warning("[DDG/%s] HTTP %s", tag, resp.status_code)
-            continue
-
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
         if tag == "lite":
             _parse_ddg_lite(soup, _add, num, results)
         else:
@@ -458,6 +630,7 @@ def search_ddg(query, num=None, lang="en", debug=False, df=""):
     return results[:num]
 
 
+@_cached_search("brave")
 def search_brave_scrape(query, num=None, lang="en", debug=False):
     """Scrape search.brave.com HTML (no API key needed)."""
     from . import core
@@ -472,25 +645,21 @@ def search_brave_scrape(query, num=None, lang="en", debug=False):
     if debug:
         log.debug("[BRAVE] %s", url)
 
-    try:
-        resp = _get(url, lang, extra_headers={"Referer": "https://search.brave.com/"})
-    except Exception as exc:
-        log.warning("[BRAVE] Request failed: %s", exc)
+    html, refusal = _search_fetch(
+        "brave", url, lang, headers={"Referer": "https://search.brave.com/"}, debug=debug
+    )
+    if refusal is not None:
+        _start_provider_cooldown("brave", refusal)
+        return []
+    if not html:
         return []
 
     if debug:
         with open("debug_brave.html", "w", encoding="utf-8") as handle:
-            handle.write(resp.text)
-        log.debug("[BRAVE] Status %s, %s bytes -> debug_brave.html", resp.status_code, len(resp.text))
+            handle.write(html)
+        log.debug("[BRAVE] %s bytes -> debug_brave.html", len(html))
 
-    if resp.status_code == 429:
-        _start_provider_cooldown("brave", resp)
-        return []
-    if resp.status_code != 200:
-        log.warning("[BRAVE] HTTP %s", resp.status_code)
-        return []
-
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     blocks = (soup.select("div.snippet[data-type='web']")
               or soup.select("div.snippet")
               or soup.select("#results .snippet"))
@@ -533,7 +702,7 @@ def search_brave_scrape(query, num=None, lang="en", debug=False):
     results = _prepare_source_results(query, results, "brave")
 
     if not results and not had_parsed_results:
-        low = resp.text.lower()
+        low = html.lower()
         if any(word in low for word in ("captcha", "unusual traffic", "challenge")):
             log.warning("[BRAVE] Blocked by anti-bot challenge for query %r", query)
         else:
@@ -1111,3 +1280,16 @@ def search(query, num=20, lang="en", debug=False, provider="auto", freshness="")
     counts = ", ".join(f"{name.title()}: {len(results)}" for name, results in combined.items())
     log.info("[MERGE] %s; merging", counts)
     return _merge_engine_results(combined, num=num)
+
+
+def reset_state():
+    """Drop provider backoff, on disk as well as in memory. Used by tests."""
+    global _PERSISTED_COOLDOWNS_LOADED
+    with _PROVIDER_COOLDOWN_LOCK:
+        _PROVIDER_COOLDOWN_UNTIL.clear()
+        _PERSISTED_COOLDOWN_UNTIL.clear()
+        _PERSISTED_COOLDOWNS_LOADED = False
+        try:
+            _cooldown_state_path().unlink()
+        except OSError:
+            pass

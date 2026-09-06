@@ -121,7 +121,8 @@ All optional — the server starts and searches with none of them set.
 | `FOOTNOTE_RESEARCH_MODEL` | no | Ollama model for `web_deep_search` planning and extraction |
 | `FOOTNOTE_EMBED_MODEL` | no | Embedding model for `semantic: true` (default `bge-m3`) |
 | `FOOTNOTE_BROWSER_FALLBACK` | no | `0` disables the Chromium tier (default `1`) |
-| `FOOTNOTE_PROXIES` | no | Comma-separated proxy URLs for the fetch ladder |
+| `FOOTNOTE_SEARCH_CACHE_TTL` | no | Seconds a scraped search result is reused (default `86400`, `0` disables) |
+| `FOOTNOTE_PROXIES` | no | Comma-separated proxy URLs, for the fetch ladder and refused searches |
 | `FOOTNOTE_SCRAPE_API` | no | `firecrawl` or `scrapingbee`, with its matching key |
 | `FOOTNOTE_SOURCE_CACHE` | no | Cache location (default `~/.footnote-mcp/source_cache/`) |
 
@@ -140,7 +141,7 @@ Every variable with its default: [.env.example](.env.example), [docs/fetching.md
 
 - The offline entailment heuristic scores 100% on numeric and factual claims but 83% overall on the labelled set; purely semantic negation and paraphrase need `backend="ollama"`.
 - CI runs Ubuntu with Python 3.12 only. macOS is the development platform; Windows is untested.
-- Zero-key providers are scraped, so results vary by IP, and Brave and DuckDuckGo enter a cooldown after rate limiting.
+- Zero-key providers are scraped, so results vary by IP. A refused search retries through a proxy and, for Bing and Brave, headless Chromium; DuckDuckGo answers Chromium with an error stub, so there it is cooldown or nothing.
 - Semantic reranking is best-effort: with no Ollama reachable, the original ranking is returned unchanged.
 - Generated recipes run in a subprocess limited to six stdlib imports, with `eval`, `exec`, `open`, and `__import__` rejected — a validator, not a hardened sandbox.
 - The hosted HTTP server holds per-user rate limits in memory; they reset on restart.
