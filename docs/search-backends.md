@@ -16,13 +16,32 @@ cross-provider merging; repeated URLs from the same provider do not receive an a
 | Wiby | none | Public JSON endpoint; result metadata includes required Wiby attribution. |
 | Marginalia | none | Shared public API; result metadata preserves its `CC-BY-NC-SA 4.0` license. |
 
-`auto` (default) queries every configured provider plus the latency-bounded zero-key fallbacks
-and merges the complete result set. Marginalia is excluded from `auto` because its shared public
-endpoint can be slow; use `provider="auto+marginalia"` to include it in the merged search, or
-`provider="marginalia"` to isolate it. Force one isolated backend with the `provider` argument
-(`searxng`/`tavily`/`brave`/`google`/`wiby`/`marginalia`/`scrape`). Brave and DuckDuckGo enter a
-temporary cooldown after rate limiting; override the defaults with
-`FOOTNOTE_BRAVE_COOLDOWN_SECONDS` and `FOOTNOTE_DDG_COOLDOWN_SECONDS`.
+## Free first, metered only if needed
+
+Under the default strategy, `auto` does **not** call every configured provider on every query.
+The free tier runs first — Bing, DuckDuckGo, Brave and Wiby, plus a self-hosted SearXNG, which
+is keyed but unmetered. Only if that returns fewer than `FOOTNOTE_MIN_FREE_RESULTS` strong
+matches (default `3`) is a metered provider called, and then just one: Tavily, the Brave API
+and Google take turns, so one quota is not drained while the others sit unused. If the chosen
+one answers empty, exactly one alternate is tried.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FOOTNOTE_MIN_FREE_RESULTS` | `3` | Strong free results below which a metered call is worth spending |
+| `FOOTNOTE_PROVIDER_STRATEGY` | `cost_aware` | Set to `merge` to call every configured provider on every query, as older versions did |
+
+A keyed provider with no key set is skipped entirely rather than failing: Google needs
+**both** `GOOGLE_API_KEY` and `GOOGLE_CSE_ID`, and with either missing it never enters the
+rotation. So the server searches perfectly well with no keys at all — it simply never has a
+metered tier to fall back on when the free one comes up thin.
+
+Marginalia is excluded from `auto` because its shared public endpoint can be slow; use
+`provider="auto+marginalia"` to include it, or `provider="marginalia"` to isolate it. Force one
+isolated backend with the `provider` argument
+(`searxng`/`tavily`/`brave`/`google`/`wiby`/`marginalia`/`scrape`); forcing one whose key is
+missing returns nothing rather than falling back. Brave and DuckDuckGo enter a temporary
+cooldown after rate limiting; override the defaults with `FOOTNOTE_BRAVE_COOLDOWN_SECONDS` and
+`FOOTNOTE_DDG_COOLDOWN_SECONDS`.
 
 ## Specialized zero-key discovery
 

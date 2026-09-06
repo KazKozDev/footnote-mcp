@@ -98,21 +98,28 @@ query → merged discovery → fetch ladder → extract (text · tables · files
 
 ### Environment variables
 
-All optional — the server starts and searches with none of them set.
+Every one is optional, but that is not the same as unused. The free tier — Bing, DuckDuckGo,
+Brave and Wiby scraped without a key — answers first, on every query. A metered provider is
+called only when the free tier comes back with fewer than `FOOTNOTE_MIN_FREE_RESULTS` strong
+matches, and then just one of them, rotating between whichever are configured so a single
+quota does not drain first. Paid search here is the fallback, not the default.
 
-| Variable | Required | What it does |
+| Variable | Effect when set | Effect when unset |
 |---|---|---|
-| `FOOTNOTE_SEARXNG_URL` | no | Zero-key SearXNG instance, tried first by `auto` |
-| `TAVILY_API_KEY` / `BRAVE_API_KEY` | no | Keyed search providers, merged with the zero-key ones |
-| `GOOGLE_API_KEY` + `GOOGLE_CSE_ID` | no | Google Programmable Search provider |
-| `GITHUB_TOKEN` | no | Raises the rate limit for `github_search` |
-| `FOOTNOTE_RESEARCH_MODEL` | no | Ollama model for `web_deep_search` planning and extraction |
-| `FOOTNOTE_EMBED_MODEL` | no | Embedding model for `semantic: true` (default `bge-m3`) |
-| `FOOTNOTE_BROWSER_FALLBACK` | no | `0` disables the Chromium tier (default `1`) |
-| `FOOTNOTE_SEARCH_CACHE_TTL` | no | Seconds a scraped search result is reused (default `86400`, `0` disables) |
-| `FOOTNOTE_PROXIES` | no | Comma-separated proxy URLs, for the fetch ladder and refused searches |
-| `FOOTNOTE_SCRAPE_API` | no | `firecrawl` or `scrapingbee`, with its matching key |
-| `FOOTNOTE_SOURCE_CACHE` | no | Cache location (default `~/.footnote-mcp/source_cache/`) |
+| `FOOTNOTE_SEARXNG_URL` | Self-hosted SearXNG joins the free tier, unmetered | Free tier is Bing, DuckDuckGo, Brave, Wiby |
+| `TAVILY_API_KEY` | Tavily joins the metered rotation | Skipped; never called |
+| `BRAVE_API_KEY` | Brave Search API joins the rotation, alongside scraped Brave | Only the scraped, keyless Brave is used |
+| `GOOGLE_API_KEY` **and** `GOOGLE_CSE_ID` | Google Programmable Search joins the rotation — both are required, either alone does nothing | Skipped; never called |
+| `FOOTNOTE_MIN_FREE_RESULTS` | Free results below which a metered call is worth spending | `3` |
+| `FOOTNOTE_PROVIDER_STRATEGY` | `merge` calls every configured provider on every query | `cost_aware`: free first, one metered call only if needed |
+| `GITHUB_TOKEN` | `github_search` runs at your account's rate limit | Works at GitHub's lower per-IP limit |
+| `FOOTNOTE_RESEARCH_MODEL` | `web_deep_search` plans requirements and extracts facts with this Ollama model | Runs without a planner |
+| `FOOTNOTE_EMBED_MODEL` | Model for `semantic: true` reranking | `bge-m3`; without Ollama, ranking is unchanged |
+| `FOOTNOTE_BROWSER_FALLBACK` | `0` disables the Chromium tier | Enabled |
+| `FOOTNOTE_SEARCH_CACHE_TTL` | Seconds a scraped search result is reused; `0` disables | `86400` |
+| `FOOTNOTE_PROXIES` | Comma-separated proxies for the fetch ladder and refused searches | Direct connections only |
+| `FOOTNOTE_SCRAPE_API` | `firecrawl` or `scrapingbee` as the last fetch tier, with its key | Ladder stops at the browser tier |
+| `FOOTNOTE_SOURCE_CACHE` | Cache location | `~/.footnote-mcp/source_cache/` |
 
 Every variable with its default: [.env.example](.env.example), [docs/fetching.md](docs/fetching.md).
 
