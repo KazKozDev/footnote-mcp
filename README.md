@@ -149,7 +149,7 @@ Every variable with its default: [.env.example](.env.example), [docs/fetching.md
 - The benchmark runner has no hard per-task timeout on Windows: it is built on `signal.setitimer`, which Windows lacks, so a hung task there runs unguarded. The server itself is unaffected.
 - Zero-key providers are scraped, so results vary by IP. A refused search retries through a proxy and, for Bing and Brave, headless Chromium; DuckDuckGo answers Chromium with an error stub, so there it is cooldown or nothing.
 - Semantic reranking is best-effort: with no Ollama reachable, the original ranking is returned unchanged.
-- Generated recipes run in a subprocess limited to six stdlib imports, with `eval`, `exec`, `open`, and `__import__` rejected — a validator, not a hardened sandbox.
+- Generated recipes run in a subprocess that may import only `csv`, `datetime`, `html`, `json`, `math`, `re` and `statistics`, with `eval`, `exec`, `open` and `__import__` rejected — a validator, not a hardened sandbox.
 - The hosted HTTP server holds per-user rate limits in memory; they reset on restart.
 
 <details>
@@ -173,6 +173,9 @@ uvx footnote-mcp
 pipx install footnote-mcp
 python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 ```
+
+None of these fetch the browser. Run `python -m playwright install chromium` once as well, or
+the browser tier and the browser tools are unavailable.
 
 ### OCR and local NLI
 
