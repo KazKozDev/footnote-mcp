@@ -183,7 +183,7 @@ invisibly — useful for watching the browser tier work on a page that keeps fai
 
 ### Environment variables
 
-All environment variables are optional. The free tier (Bing, DuckDuckGo, Brave, Wiby) answers first; metered providers are called only when free results fall below `FOOTNOTE_MIN_FREE_RESULTS`.
+Every variable is optional. The free tier (Bing, DuckDuckGo, Brave, Wiby) answers first; metered providers are called only when free results fall below `FOOTNOTE_MIN_FREE_RESULTS`. Paid search is the fallback, not the default: without keys, most queries are unaffected, and only narrow or obscure searches stay thin rather than being topped up.
 
 | Variable | Effect when set | Effect when unset |
 |---|---|---|
