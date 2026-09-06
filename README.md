@@ -130,7 +130,7 @@ Every variable with its default: [.env.example](.env.example), [docs/fetching.md
 
 ## Requirements
 
-- Python 3.10 or newer
+- Python 3.10 or newer, on macOS, Linux or Windows — CI runs all six combinations
 - Chromium via `python -m playwright install chromium`, for the browser tier and browser tools
 - Any MCP client speaking stdio; config is documented for Claude Desktop and Cursor
 - Optional: a local Ollama for `semantic: true` and the `ollama` entailment backend
@@ -140,7 +140,7 @@ Every variable with its default: [.env.example](.env.example), [docs/fetching.md
 ## Limitations
 
 - The offline entailment heuristic scores 100% on numeric and factual claims but 83% overall on the labelled set; purely semantic negation and paraphrase need `backend="ollama"`.
-- CI runs Ubuntu with Python 3.12 only. macOS is the development platform; Windows is untested.
+- The benchmark runner has no hard per-task timeout on Windows: it is built on `signal.setitimer`, which Windows lacks, so a hung task there runs unguarded. The server itself is unaffected.
 - Zero-key providers are scraped, so results vary by IP. A refused search retries through a proxy and, for Bing and Brave, headless Chromium; DuckDuckGo answers Chromium with an error stub, so there it is cooldown or nothing.
 - Semantic reranking is best-effort: with no Ollama reachable, the original ranking is returned unchanged.
 - Generated recipes run in a subprocess limited to six stdlib imports, with `eval`, `exec`, `open`, and `__import__` rejected — a validator, not a hardened sandbox.
@@ -187,6 +187,8 @@ RUN_LIVE_WEB_TESTS=1 python -m pytest -m live    # opt-in live search
 <div align="center">
 
 ![Claude Desktop](https://img.shields.io/badge/Claude_Desktop-333?style=flat-square&logo=anthropic&logoColor=fff) ![Cursor](https://img.shields.io/badge/Cursor-333?style=flat-square&logo=cursor&logoColor=fff)
+
+![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff) ![Linux](https://img.shields.io/badge/Linux-333?style=flat-square&logo=linux&logoColor=fff) ![Windows](https://img.shields.io/badge/Windows-333?style=flat-square&logo=windows&logoColor=fff)
 
 [![tests](https://img.shields.io/github/actions/workflow/status/KazKozDev/footnote-mcp/tests.yml?style=flat-square&label=tests)](https://github.com/KazKozDev/footnote-mcp/actions/workflows/tests.yml) [![PyPI](https://img.shields.io/pypi/v/footnote-mcp?style=flat-square)](https://pypi.org/project/footnote-mcp/) [![Python](https://img.shields.io/badge/python-3.10%2B-333?style=flat-square)](pyproject.toml) [![License](https://img.shields.io/badge/license-MIT-333?style=flat-square)](LICENSE)
 
