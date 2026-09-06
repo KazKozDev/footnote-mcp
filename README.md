@@ -1,4 +1,8 @@
+# Give Claude Desktop & Cursor Verified Web Search (Footnote MCP)
 
+> Source-grounded web research MCP server with fact-checking and automated claim verification.
+
+<!-- mcp-name: io.github.KazKozDev/footnote-mcp -->
 
 An MCP server for source-grounded web research. It searches the web, fetches and
 extracts pages, pulls structured data out of tables/files/APIs, and — the part that
