@@ -43,7 +43,7 @@ source-specific ones; the `us_`/`ru_` variants use the optional `holidays` packa
 | Tool | Description |
 |------|-------------|
 | `classify_source` | Classify official / aggregator / blog / forum / interactive / blocked / error. |
-| `evidence_entailment` | Strict claim-vs-source checker: `heuristic`, `auto`, `ollama`, optional `local_nli`. |
+| `evidence_entailment` | Strict claim-vs-source checker. `auto` (default) and `heuristic` are deterministic and offline; where `auto` is unsure it returns `needs_review` plus matched spans rather than escalating. `ollama` and `local_nli` are explicit opt-ins. |
 | `corroborate_claim` | Triangulate a claim across excerpts (corroborated / conflicting / single_source / …). |
 | `locate_claim_span` | Locate supporting sentence(s) with char offsets and a containment score. |
 | `source_cache_get` / `source_cache_put` | Inspect and write persistent source-cache entries. |

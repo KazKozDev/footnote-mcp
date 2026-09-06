@@ -288,7 +288,10 @@ def test_entailment_heuristic_auto_and_ollama_fallback(monkeypatch):
     contradicted = tools_data.evidence_entailment("2026-05-01 rate 90.1", "2026-05-01 rate 91.2", backend="heuristic")
     invalid = tools_data.evidence_entailment("a", "a", backend="bad")
 
+    calls = []
+
     def fake_ollama(*args, **kwargs):
+        calls.append(1)
         raise RuntimeError("ollama down")
 
     monkeypatch.setattr(entailment, "_ollama_entailment", fake_ollama)
@@ -304,8 +307,13 @@ def test_entailment_heuristic_auto_and_ollama_fallback(monkeypatch):
 
     assert contradicted["status"] == "contradicted"
     assert invalid["reason"] == "unknown backend: bad"
+    # auto never reaches for a local model: an uncertain deterministic verdict is
+    # handed back for the caller to judge, with the spans to read.
     assert auto["backend"] == "heuristic"
-    assert "fallback_reason" in auto
+    assert auto["needs_review"] is True
+    assert auto["explicit_backends"] == ["ollama", "local_nli"]
+    assert isinstance(auto["spans"], list)
+    assert calls == [1], "only the explicitly forced call should have reached ollama"
     assert forced["backend"] == "ollama"
     assert forced["fallback"]["backend"] == "heuristic"
     assert local_nli["backend"] == "local_nli"

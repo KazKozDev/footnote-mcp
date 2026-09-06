@@ -75,8 +75,12 @@ on rather than a paragraph it has to interpret:
 {"status": "supported", "score": 0.778, "reason": "token overlap heuristic", "backend": "heuristic"}
 ```
 
-`heuristic` is offline and deterministic; `backend="ollama"` adds a local LLM judge and `auto`
-escalates to it. Measured accuracy: [benchmarks/REPORT.md](benchmarks/REPORT.md).
+The default backend is deterministic and offline, and it never quietly hands the decision to
+another model: where it is not confident it returns `needs_review` with the spans it matched,
+for you — or the assistant that called it, which already has both texts — to read. A local
+LLM judge (`backend="ollama"`) and a local NLI model (`backend="local_nli"`) are there when you
+want them. Measured accuracy of the deterministic path, which is the default:
+[benchmarks/REPORT.md](benchmarks/REPORT.md).
 
 ## How it works
 

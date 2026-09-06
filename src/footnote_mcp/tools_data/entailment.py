@@ -168,6 +168,18 @@ Do not use outside knowledge."""
     }
 
 
+def _supporting_spans(claim: str, source_excerpt: str) -> list:
+    """Best-effort sentence spans for a caller that has to judge for itself."""
+    try:
+        from ..tools_extra import locate_claim_span
+    except Exception:  # pragma: no cover - import guard only
+        return []
+    try:
+        return locate_claim_span(claim, source_excerpt, max_spans=3).get("spans", [])
+    except Exception:
+        return []
+
+
 def evidence_entailment(claim: str, source_excerpt: str, backend: str = "auto", model: str | None = None) -> dict:
     backend = (backend or "auto").lower()
     heuristic = _heuristic_entailment(claim, source_excerpt)
@@ -175,8 +187,24 @@ def evidence_entailment(claim: str, source_excerpt: str, backend: str = "auto", 
         return heuristic
     if backend not in {"auto", "ollama", "local_nli"}:
         return {"status": "unsupported", "score": 0.0, "reason": f"unknown backend: {backend}", "backend": backend}
-    if backend == "auto" and heuristic["status"] in {"supported", "contradicted"} and heuristic["score"] >= 0.75:
-        return heuristic
+    if backend == "auto":
+        if heuristic["status"] in {"supported", "contradicted"} and heuristic["score"] >= 0.75:
+            return heuristic
+        # Uncertain. The old behaviour escalated to a local 7B judge here, which
+        # handed the hardest calls to the weakest participant: an MCP client
+        # already holds both the claim and the excerpt, and is better placed to
+        # read them than qwen2.5 is. So say plainly that this one needs a human
+        # or the caller's own judgement, and hand over the spans to read.
+        return {
+            **heuristic,
+            "needs_review": True,
+            "review_reason": (
+                "the deterministic check is not confident; the caller should read the quoted "
+                "spans and decide, or re-run with an explicit backend"
+            ),
+            "spans": _supporting_spans(claim, source_excerpt),
+            "explicit_backends": ["ollama", "local_nli"],
+        }
     if backend == "local_nli":
         judged = _local_nli_entailment(claim=claim, source_excerpt=source_excerpt, model=model)
         if judged.get("error"):
