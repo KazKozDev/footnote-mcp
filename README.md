@@ -12,7 +12,7 @@ pip install footnote-mcp
 
 Runs without API keys · 45 tools · MIT licensed
 
----
+
 
 <!-- mcp-name: io.github.KazKozDev/footnote-mcp -->
 
@@ -185,7 +185,7 @@ RUN_LIVE_WEB_TESTS=1 python -m pytest -m live    # opt-in live search
 
 </details>
 
----
+<br><br>
 
 <div align="center">
 
