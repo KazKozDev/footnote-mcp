@@ -1,4 +1,4 @@
-"""Claim-vs-source entailment (heuristic, local NLI, ollama)."""
+"""Claim-vs-source entailment (heuristic, local NLI, ollama, OpenAI-compatible)."""
 
 from __future__ import annotations
 
@@ -140,10 +140,7 @@ def _local_nli_entailment(claim: str, source_excerpt: str, model: str | None = N
     }
 
 
-def _ollama_entailment(claim: str, source_excerpt: str, model: str | None = None, timeout: int = 25) -> dict:
-    model = model or os.getenv("FOOTNOTE_ENTAILMENT_MODEL") or os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
-    endpoint = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
-    system = """You are a strict evidence entailment judge.
+_JUDGE_SYSTEM_PROMPT = """You are a strict evidence entailment judge.
 Use only the source excerpt.
 Return JSON only with:
 {"status":"supported|partially_supported|unsupported|contradicted","score":0.0-1.0,"reason":"short reason"}
@@ -153,24 +150,23 @@ Definitions:
 - unsupported: the source does not provide enough evidence for the claim.
 - contradicted: the source states facts that conflict with the claim.
 Do not use outside knowledge."""
-    user = f"CLAIM:\n{claim[:2000]}\n\nSOURCE_EXCERPT:\n{source_excerpt[:6000]}\n\nJudge entailment."
-    body = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "stream": False,
-        "options": {"temperature": 0},
-    }
-    req = Request(endpoint, data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
-    with urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    content = (payload.get("message") or {}).get("content", "")
+
+_VALID_STATUSES = {"supported", "partially_supported", "unsupported", "contradicted"}
+
+
+def _judge_messages(claim: str, source_excerpt: str) -> list:
+    return [
+        {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+        {"role": "user", "content": f"CLAIM:\n{claim[:2000]}\n\nSOURCE_EXCERPT:\n{source_excerpt[:6000]}\n\nJudge entailment."},
+    ]
+
+
+def _parse_judge_reply(content: str, backend: str, model: str) -> dict:
     parsed = _extract_json_object(content)
     status = str(parsed.get("status", "")).lower()
-    if status not in {"supported", "partially_supported", "unsupported", "contradicted"}:
-        return {"error": "Ollama judge returned invalid status", "raw": content[:1000], "backend": "ollama", "model": model}
+    if status not in _VALID_STATUSES:
+        return {"error": f"{backend} judge returned invalid status", "raw": content[:1000],
+                "backend": backend, "model": model}
     try:
         score = float(parsed.get("score", 0.0))
     except (TypeError, ValueError):
@@ -179,9 +175,54 @@ Do not use outside knowledge."""
         "status": status,
         "score": max(0.0, min(1.0, score)),
         "reason": str(parsed.get("reason", ""))[:500],
-        "backend": "ollama",
+        "backend": backend,
         "model": model,
     }
+
+
+def _ollama_entailment(claim: str, source_excerpt: str, model: str | None = None, timeout: int = 25) -> dict:
+    model = model or os.getenv("FOOTNOTE_ENTAILMENT_MODEL") or os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
+    endpoint = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
+    body = {
+        "model": model,
+        "messages": _judge_messages(claim, source_excerpt),
+        "stream": False,
+        "options": {"temperature": 0},
+    }
+    req = Request(endpoint, data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+    with urlopen(req, timeout=timeout) as resp:
+        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    content = (payload.get("message") or {}).get("content", "")
+    return _parse_judge_reply(content, "ollama", model)
+
+
+def _openai_entailment(claim: str, source_excerpt: str, model: str | None = None, timeout: int = 120) -> dict:
+    """Judge through any OpenAI-compatible /v1/chat/completions server.
+
+    Covers the servers that speak that dialect and not Ollama's /api/chat —
+    llama.cpp, vLLM, LM Studio, a local router, or a hosted provider. The base
+    URL points at the /v1 root; the API key is optional, since a local server
+    usually wants none.
+    """
+    model = model or os.getenv("FOOTNOTE_ENTAILMENT_MODEL") or os.getenv("OPENAI_MODEL") or "auto"
+    base = (os.getenv("FOOTNOTE_OPENAI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+            or "http://127.0.0.1:8080/v1").rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    key = os.getenv("FOOTNOTE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    body = {
+        "model": model,
+        "messages": _judge_messages(claim, source_excerpt),
+        "temperature": 0,
+        "stream": False,
+    }
+    req = Request(f"{base}/chat/completions", data=json.dumps(body).encode("utf-8"),
+                  headers=headers, method="POST")
+    with urlopen(req, timeout=timeout) as resp:
+        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    content = ((payload.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+    return _parse_judge_reply(content, "openai", model)
 
 
 def _supporting_spans(claim: str, source_excerpt: str) -> list:
@@ -196,12 +237,35 @@ def _supporting_spans(claim: str, source_excerpt: str) -> list:
         return []
 
 
+# A judge that could not be reached has said nothing about the claim. Reporting
+# that as "unsupported" — which the error paths used to do, with a score of 0.0 —
+# turns a network blip into a verdict against the evidence, in the one tool whose
+# whole job is telling "the source does not support this" apart from "we could
+# not check". The deterministic result stands in, flagged for review, and the
+# transport failure is named.
+def _unreachable_judge(heuristic: dict, backend: str, claim: str, source_excerpt: str, error: str) -> dict:
+    return {
+        **heuristic,
+        "needs_review": True,
+        "judge_error": error,
+        "review_reason": (
+            f"the {backend} judge could not be reached, so this is the deterministic "
+            "result only; read the quoted spans or retry"
+        ),
+        "requested_backend": backend,
+        "spans": _supporting_spans(claim, source_excerpt),
+    }
+
+
+_LLM_BACKENDS = {"ollama", "local_nli", "openai"}
+
+
 def evidence_entailment(claim: str, source_excerpt: str, backend: str = "auto", model: str | None = None) -> dict:
     backend = (backend or "auto").lower()
     heuristic = _heuristic_entailment(claim, source_excerpt)
     if backend == "heuristic":
         return heuristic
-    if backend not in {"auto", "ollama", "local_nli"}:
+    if backend not in _LLM_BACKENDS | {"auto"}:
         return {"status": "unsupported", "score": 0.0, "reason": f"unknown backend: {backend}", "backend": backend}
     if backend == "auto":
         if heuristic["status"] in {"supported", "contradicted"} and heuristic["score"] >= 0.75:
@@ -219,23 +283,19 @@ def evidence_entailment(claim: str, source_excerpt: str, backend: str = "auto", 
                 "spans and decide, or re-run with an explicit backend"
             ),
             "spans": _supporting_spans(claim, source_excerpt),
-            "explicit_backends": ["ollama", "local_nli"],
+            "explicit_backends": sorted(_LLM_BACKENDS),
         }
-    if backend == "local_nli":
-        judged = _local_nli_entailment(claim=claim, source_excerpt=source_excerpt, model=model)
-        if judged.get("error"):
-            return {"status": "unsupported", "score": 0.0, "reason": judged["error"], "backend": "local_nli", "fallback": heuristic}
-        judged["heuristic_precheck"] = heuristic
-        return judged
+
+    judges = {
+        "local_nli": _local_nli_entailment,
+        "ollama": _ollama_entailment,
+        "openai": _openai_entailment,
+    }
     try:
-        judged = _ollama_entailment(claim=claim, source_excerpt=source_excerpt, model=model)
-        if judged.get("error"):
-            if backend == "ollama":
-                return {"status": "unsupported", "score": 0.0, "reason": judged["error"], "backend": "ollama", "fallback": heuristic}
-            return {**heuristic, "fallback_reason": judged["error"]}
-        judged["heuristic_precheck"] = heuristic
-        return judged
+        judged = judges[backend](claim=claim, source_excerpt=source_excerpt, model=model)
     except Exception as exc:
-        if backend == "ollama":
-            return {"status": "unsupported", "score": 0.0, "reason": f"Ollama entailment failed: {exc}", "backend": "ollama", "fallback": heuristic}
-        return {**heuristic, "fallback_reason": f"Ollama entailment unavailable: {exc}"}
+        return _unreachable_judge(heuristic, backend, claim, source_excerpt, f"{type(exc).__name__}: {exc}")
+    if judged.get("error"):
+        return _unreachable_judge(heuristic, backend, claim, source_excerpt, judged["error"])
+    judged["heuristic_precheck"] = heuristic
+    return judged

@@ -311,11 +311,15 @@ def test_entailment_heuristic_auto_and_ollama_fallback(monkeypatch):
     # handed back for the caller to judge, with the spans to read.
     assert auto["backend"] == "heuristic"
     assert auto["needs_review"] is True
-    assert auto["explicit_backends"] == ["ollama", "local_nli"]
+    assert auto["explicit_backends"] == ["local_nli", "ollama", "openai"]
     assert isinstance(auto["spans"], list)
     assert calls == [1], "only the explicitly forced call should have reached ollama"
-    assert forced["backend"] == "ollama"
-    assert forced["fallback"]["backend"] == "heuristic"
+    # A judge that raised has said nothing about the claim, so the deterministic
+    # verdict stands in flagged for review — it is not replaced by a denial.
+    assert forced["backend"] == "heuristic"
+    assert forced["needs_review"] is True
+    assert forced["requested_backend"] == "ollama"
+    assert "ollama down" in forced["judge_error"]
     assert local_nli["backend"] == "local_nli"
     assert local_nli["heuristic_precheck"]["backend"] == "heuristic"
 
@@ -365,3 +369,61 @@ def test_entailment_still_rejects_a_wrong_number_in_the_same_row():
               "| 27 | Kroger | Retail | 147,123 | -1.9% | 409,000 | Cincinnati, Ohio |")
     verdict = evidence_entailment("Kroger reported revenue of 900,000 million USD.", source, backend="heuristic")
     assert verdict["status"] == "unsupported"
+
+
+def test_unreachable_judge_is_not_a_verdict_against_the_claim():
+    """A judge that could not be reached has said nothing. Reporting that as
+    "unsupported" turned a network blip into a verdict against the evidence."""
+    import footnote_mcp.tools_data.entailment as ent
+
+    def boom(**kwargs):
+        raise OSError("connection refused")
+
+    original = ent._openai_entailment
+    ent._openai_entailment = boom
+    try:
+        verdict = ent.evidence_entailment(
+            "Paris is the capital of France.",
+            "Paris is the capital of France.",
+            backend="openai",
+        )
+    finally:
+        ent._openai_entailment = original
+
+    assert verdict["needs_review"] is True
+    assert "connection refused" in verdict["judge_error"]
+    assert verdict["requested_backend"] == "openai"
+    # the deterministic verdict stands in; it is not overwritten with a denial
+    assert verdict["status"] == "supported"
+
+
+def test_openai_backend_posts_to_a_chat_completions_endpoint(monkeypatch):
+    import footnote_mcp.tools_data.entailment as ent
+
+    seen = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            body = {"choices": [{"message": {"content": '{"status":"supported","score":0.9,"reason":"ok"}'}}]}
+            return json.dumps(body).encode()
+
+    def fake_urlopen(req, timeout=None):
+        seen["url"] = req.full_url
+        seen["body"] = json.loads(req.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setenv("FOOTNOTE_OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")
+    monkeypatch.setenv("FOOTNOTE_ENTAILMENT_MODEL", "auto")
+    monkeypatch.setattr(ent, "urlopen", fake_urlopen)
+
+    verdict = ent.evidence_entailment("a claim", "a source", backend="openai")
+    assert seen["url"] == "http://127.0.0.1:8080/v1/chat/completions"
+    assert seen["body"]["model"] == "auto"
+    assert verdict["status"] == "supported"
+    assert verdict["backend"] == "openai"
