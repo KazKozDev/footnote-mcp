@@ -344,3 +344,24 @@ def test_debug_report_and_startup_health(monkeypatch, tmp_path):
     assert report["verification"]["gaps"] == ["missing date"]
     assert "checks" in health
     assert "cache_dir" in health["checks"]
+
+
+def test_entailment_counts_a_bare_plural_as_its_singular():
+    """A table names its unit in the header ("USD millions") while the claim
+    about one row says "million"; scoring that as a miss cost a correct numeric
+    claim its verdict."""
+    from footnote_mcp.tools_data.entailment import evidence_entailment
+
+    source = ("| Rank | Name | Industry | Revenue (USD millions) |\n"
+              "| 27 | Kroger | Retail | 147,123 | -1.9% | 409,000 | Cincinnati, Ohio |")
+    verdict = evidence_entailment("Kroger reported revenue of 147,123 million USD.", source, backend="heuristic")
+    assert verdict["status"] == "supported"
+
+
+def test_entailment_still_rejects_a_wrong_number_in_the_same_row():
+    from footnote_mcp.tools_data.entailment import evidence_entailment
+
+    source = ("| Rank | Name | Industry | Revenue (USD millions) |\n"
+              "| 27 | Kroger | Retail | 147,123 | -1.9% | 409,000 | Cincinnati, Ohio |")
+    verdict = evidence_entailment("Kroger reported revenue of 900,000 million USD.", source, backend="heuristic")
+    assert verdict["status"] == "unsupported"

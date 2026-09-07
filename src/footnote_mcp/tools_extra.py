@@ -200,22 +200,40 @@ def locate_claim_span(claim: str, source_text: str, max_spans: int = 3) -> dict:
     if not claim_tokens or not text.strip():
         return {"claim": claim, "spans": [], "best_score": 0.0}
 
+    def _is_table_row(line):
+        """A row is the unit of meaning in a grid, the way a sentence is in prose."""
+        return line.count("|") >= 2 or line.count("\t") >= 2
+
+    def _candidates(line, offset):
+        """Yield (start, end, text) for the citable units inside one line."""
+        if _is_table_row(line):
+            # Sentence punctuation inside a cell — the "." of 2.0%, the "," of
+            # 196,650 — used to cut a row into fragments, and a span would open
+            # mid-cell on a number that is not the one being cited.
+            yield offset, offset + len(line), line.strip()
+            return
+        for match in re.finditer(r"[^.!?]+[.!?]?", line):
+            yield offset + match.start(), offset + match.end(), match.group(0).strip()
+
     spans = []
-    for m in re.finditer(r"[^.!?\n]+[.!?]?", text):
-        sentence = m.group(0).strip()
-        if not sentence:
+    for line_match in re.finditer(r"[^\n]*", text):
+        line = line_match.group(0)
+        if not line.strip():
             continue
-        s_tokens = _tokenize(sentence)
-        overlap = claim_tokens & s_tokens
-        if not overlap:
-            continue
-        spans.append({
-            "text": sentence,
-            "start": m.start(),
-            "end": m.end(),
-            "score": round(len(overlap) / len(claim_tokens), 3),
-            "matched_terms": sorted(overlap),
-        })
+        for start, end, sentence in _candidates(line, line_match.start()):
+            if not sentence:
+                continue
+            s_tokens = _tokenize(sentence)
+            overlap = claim_tokens & s_tokens
+            if not overlap:
+                continue
+            spans.append({
+                "text": sentence,
+                "start": start,
+                "end": end,
+                "score": round(len(overlap) / len(claim_tokens), 3),
+                "matched_terms": sorted(overlap),
+            })
 
     spans.sort(key=lambda s: s["score"], reverse=True)
     top = spans[: max(1, max_spans)]

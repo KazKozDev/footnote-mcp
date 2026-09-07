@@ -104,6 +104,24 @@ def test_locate_claim_span_finds_best_sentence():
     assert result["best_score"] > 0
 
 
+def test_locate_claim_span_cites_a_whole_table_row():
+    """Sentence punctuation inside a cell — the "." of 2.0%, the "," of 196,650 —
+    used to cut a row up, so a span opened mid-cell on the wrong number."""
+    source = (
+        "| Rank | Name | Industry | Revenue | Growth | Employees | Headquarters |\n"
+        "| 55 | Albertsons | Retail | 79,238 | 2.0% | 196,650 | Boise, Idaho |"
+    )
+    span = tools_extra.locate_claim_span("Albertsons is headquartered in Boise, Idaho", source)["spans"][0]
+    assert span["text"] == "| 55 | Albertsons | Retail | 79,238 | 2.0% | 196,650 | Boise, Idaho |"
+    assert source[span["start"]:span["end"]] == span["text"]
+
+
+def test_locate_claim_span_still_splits_prose_into_sentences():
+    source = "Paris is the capital. Lyon is not the capital. Both are in France."
+    span = tools_extra.locate_claim_span("Paris is the capital", source)["spans"][0]
+    assert span["text"] == "Paris is the capital."
+
+
 def test_locate_claim_span_empty_inputs():
     assert tools_extra.locate_claim_span("", "text")["spans"] == []
     assert tools_extra.locate_claim_span("claim", "")["spans"] == []

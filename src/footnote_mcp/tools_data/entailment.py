@@ -42,9 +42,25 @@ def _extract_json_object(text: str) -> dict:
     return {}
 
 
+def _fold_plural(token: str) -> str:
+    """Count a bare plural as its singular.
+
+    A table names its unit in the column header — "Revenue (USD millions)" —
+    while the claim about one row says "million". That is the same word, and
+    scoring it as a miss cost a correct numeric claim its verdict. Deliberately
+    only a trailing "s": this is a matcher, not a stemmer, and folding harder
+    would start merging words that differ.
+    """
+    return token[:-1] if len(token) > 3 and token.endswith("s") and not token[-2].isdigit() else token
+
+
+def _tokens(text: str) -> set:
+    return {_fold_plural(token.lower()) for token in re.findall(r"[A-Za-z0-9]{3,}", text)}
+
+
 def _heuristic_entailment(claim: str, source_excerpt: str) -> dict:
-    claim_tokens = {token.lower() for token in re.findall(r"[A-Za-z0-9]{3,}", claim)}
-    source_tokens = {token.lower() for token in re.findall(r"[A-Za-z0-9]{3,}", source_excerpt)}
+    claim_tokens = _tokens(claim)
+    source_tokens = _tokens(source_excerpt)
     if not claim_tokens:
         return {"status": "unsupported", "score": 0.0, "reason": "empty claim", "backend": "heuristic"}
     overlap = len(claim_tokens & source_tokens) / len(claim_tokens)
