@@ -765,3 +765,71 @@ def test_browser_tier_rejects_a_too_small_page(monkeypatch):
     )
     assert search.search_bing("tiny stub", num=3) == []
     assert search._provider_on_cooldown("bing"), "an error stub must still trip the cooldown"
+
+
+def test_cached_search_wrapper_accepts_provider_specific_positional_args(monkeypatch):
+    """The cache wrapper binds each provider's own signature, so a parameter
+    only one provider has (ddg's df) survives a positional call."""
+    monkeypatch.setattr(search, "_search_fetch", lambda *a, **k: ("", None))
+    monkeypatch.setattr(search, "_provider_on_cooldown", lambda engine: False)
+    assert search.search_ddg("q", 5, "en", False, "w") == []
+
+
+BING_DICTIONARY_HTML = """
+<ol id="b_results">
+  <li class="b_algo">
+    <h2><a href="https://www.merriam-webster.com/dictionary/many">MANY Definition &amp; Meaning</a></h2>
+    <div class="b_caption"><p>The meaning of MANY is amounting to a large number.</p></div>
+  </li>
+  <li class="b_algo">
+    <h2><a href="https://en.wikipedia.org/wiki/Eurozone">Eurozone</a></h2>
+    <div class="b_caption"><p>The euro is the official currency of 20 of the 27 EU countries.</p></div>
+  </li>
+</ol>
+"""
+
+
+def test_search_bing_drops_dictionary_rows_matching_only_a_question_word(monkeypatch):
+    """A natural-language question used to make its own function words
+    distinctive, so a definition page for "many" counted as relevant."""
+    monkeypatch.setattr(search, "_get", lambda *a, **k: FakeHtmlResp(BING_DICTIONARY_HTML))
+    out = search.search_bing("how many countries use the euro")
+    assert [item["url"] for item in out] == ["https://en.wikipedia.org/wiki/Eurozone"]
+
+
+def test_question_words_are_not_search_terms():
+    assert search._search_terms("how many countries use the euro") == {"countries", "use", "euro"}
+    assert search._search_terms("сколько стран используют евро") == {"стран", "используют", "евро"}
+
+
+def test_bing_strips_the_question_frame_before_sending(monkeypatch):
+    """Bing matched a word in the question instead of its topic; the frame is
+    dropped so the same question goes out as keywords."""
+    requested = {}
+
+    def fake_get(url, *args, **kwargs):
+        requested["url"] = url
+        return FakeHtmlResp(BING_DICTIONARY_HTML)
+
+    monkeypatch.setattr(search, "_get", fake_get)
+    search.search_bing("how many countries use the euro")
+    assert "q=countries+use+the+euro" in requested["url"]
+
+
+def test_bing_leaves_operator_queries_untouched(monkeypatch):
+    requested = {}
+
+    def fake_get(url, *args, **kwargs):
+        requested["url"] = url
+        return FakeHtmlResp(BING_HTML)
+
+    monkeypatch.setattr(search, "_get", fake_get)
+    search.search_bing('what is "Model Context Protocol" site:github.com')
+    assert "site%3Agithub.com" in requested["url"]
+    assert "what+is" in requested["url"]
+
+
+def test_question_frame_stripping_keeps_a_plain_query():
+    assert search._strip_question_frame("python programming language") == "python programming language"
+    assert search._strip_question_frame("how") == "how"
+    assert search._strip_question_frame("сколько стран используют евро") == "стран используют евро"

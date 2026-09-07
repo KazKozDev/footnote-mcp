@@ -31,6 +31,9 @@ TOP_N_FETCH = 15
 MAX_CONTENT_CHARS = 12000
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
+# Tables are split on row boundaries with the header repeated, so they need a
+# wider budget than prose to arrive as one answerable unit.
+TABLE_CHUNK_SIZE = 2400
 TOP_CHUNKS_PER_PAGE = 3
 TOTAL_CONTEXT_CHUNKS = 15
 FETCH_WORKERS = 10
@@ -54,6 +57,7 @@ __all__ = [
     "MAX_CONTENT_CHARS",
     "CHUNK_SIZE",
     "CHUNK_OVERLAP",
+    "TABLE_CHUNK_SIZE",
     "TOP_CHUNKS_PER_PAGE",
     "TOTAL_CONTEXT_CHUNKS",
     "FETCH_WORKERS",

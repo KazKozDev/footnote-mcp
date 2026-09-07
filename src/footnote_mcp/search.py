@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import functools
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -20,9 +21,26 @@ from .fetch import _get
 from .politeness import retry_after_seconds
 
 
+# Words that carry no topic. A result matching only one of these has shown no
+# connection to the query, and treating one as evidence is how a natural-language
+# question let dictionary pages through: "how many countries use the euro" made
+# "many" a distinctive term, so Bing's definition-of-MANY rows matched it and
+# were certified relevant. Tokens of two characters or fewer are dropped by
+# _search_terms already, so only longer function words need listing here.
 _SEARCH_STOPWORDS = {
     "the", "and", "for", "from", "with", "that", "this", "what", "where", "when",
+    # interrogatives and the auxiliaries that frame a question
+    "how", "why", "who", "whom", "whose", "which",
+    "does", "did", "are", "was", "were", "been", "being",
+    "will", "would", "can", "could", "should", "must", "have", "has", "had",
+    # bare quantifiers and pronouns
+    "many", "much", "more", "most", "some", "any", "all",
+    "you", "your", "its", "they", "them", "their", "there", "here", "not", "but", "than", "then",
     "как", "для", "или", "что", "это", "где", "когда", "при", "про",
+    "почему", "зачем", "кто", "кого", "кому", "чей",
+    "какой", "какая", "какое", "какие", "сколько", "чего", "чему", "чем",
+    "был", "была", "было", "были", "будет", "есть", "может", "можно", "нужно",
+    "если", "чтобы", "также", "тоже", "они", "них", "его", "она", "оно",
 }
 _GENERIC_SEARCH_TERMS = {
     "context", "documentation", "docs", "guide", "github", "language", "model", "official",
@@ -307,20 +325,35 @@ def _cached_search(engine):
     rate limit we keep running into.
     """
     def wrap(fn):
+        # Bind against the wrapped function's own signature rather than
+        # restating it here: a provider that grows a parameter (ddg's df) used
+        # to reach a wrapper that took four positionals and raise a TypeError
+        # naming the provider, which reads as a broken provider rather than a
+        # stale decorator.
+        sig = inspect.signature(fn)
+
         @functools.wraps(fn)
-        def inner(query, num=None, lang="en", debug=False, **kwargs):
+        def inner(*args, **kwargs):
             from . import core
 
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            call = dict(bound.arguments)
+            query = call["query"]
+            lang = call.get("lang", "en")
+            num = call.get("num")
+
             resolved = core.NUM_PER_ENGINE if num is None else num
+            extra = {k: v for k, v in call.items() if k not in ("query", "num", "lang", "debug")}
             key = _search_cache_key(
                 engine, query, lang, resolved,
-                "&".join(f"{k}={v}" for k, v in sorted(kwargs.items())),
+                "&".join(f"{k}={v}" for k, v in sorted(extra.items())),
             )
             hit = _search_cache_get(key)
             if hit is not None:
                 log.debug("[%s] cache hit for %r", engine.upper(), query)
                 return hit[:resolved]
-            results = fn(query, num=num, lang=lang, debug=debug, **kwargs)
+            results = fn(**call)
             _search_cache_put(key, results)
             return results
         return inner
@@ -411,6 +444,43 @@ def _search_fetch(engine, url, lang="en", headers=None, debug=False):
     return None, refusal
 
 
+# Bing answers a natural-language question by matching a word in it rather than
+# the topic: "how many countries use the euro" comes back as dictionary entries
+# for MANY. Stripping the interrogative frame — and only the leading frame, so
+# word order and every content word survive — asks the same question as
+# keywords. Applied to Bing alone: it is the engine measured to need it.
+_QUESTION_LEAD_WORDS = {
+    "how", "what", "which", "who", "whom", "whose", "why", "where", "when",
+    "is", "are", "was", "were", "do", "does", "did", "can", "could", "will",
+    "would", "should", "has", "have", "had", "many", "much",
+    "как", "какой", "какая", "какое", "какие", "сколько", "почему", "зачем",
+    "кто", "что", "где", "когда", "чему", "чего",
+}
+
+
+def _strip_question_frame(query):
+    """Drop the leading question words from a query, keeping the rest verbatim."""
+    # An operator query is a precise instrument; never rewrite one.
+    if any(marker in query for marker in ('"', "site:", "filetype:", "inurl:", "intitle:", " OR ")):
+        return query
+    # A leading "-" is the exclusion operator; a hyphen inside a word is not.
+    if any(word.startswith("-") for word in query.split()):
+        return query
+
+    stripped = query.strip().rstrip("?").strip()
+    words = stripped.split()
+    index = 0
+    while index < len(words) and words[index].lower() in _QUESTION_LEAD_WORDS:
+        index += 1
+
+    # Refuse to rewrite when the frame is the whole query, or when too little is
+    # left to search for: a two-word remainder is a weaker query, not a better one.
+    remainder = words[index:]
+    if index == 0 or len(remainder) < 2:
+        return query
+    return " ".join(remainder)
+
+
 @_cached_search("bing")
 def search_bing(query, num=None, lang="en", debug=False):
     from . import core
@@ -418,7 +488,10 @@ def search_bing(query, num=None, lang="en", debug=False):
     if num is None:
         num = core.NUM_PER_ENGINE
 
-    params = {"q": query, "count": min(num + 5, 30), "setlang": lang}
+    sent = _strip_question_frame(query)
+    if sent != query:
+        log.debug("[BING] question reframed: %r -> %r", query, sent)
+    params = {"q": sent, "count": min(num + 5, 30), "setlang": lang}
     if lang == "en":
         params["cc"] = "US"
         params["setmkt"] = "en-US"
