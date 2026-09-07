@@ -130,12 +130,20 @@ def _table_rows(block):
     return lines if _looks_like_column_gaps(lines) else None
 
 
+# How many leading lines the column names may occupy before the --- separator.
+# Measured on Wikipedia: a wide table's header arrives wrapped across two lines,
+# and taking only the first left every continuation part naming four of seven
+# columns — the same headerless figures the split was meant to prevent.
+_MAX_HEADER_LINES = 4
+
+
 def _table_header(rows):
-    """The leading label rows: the column names plus a --- separator if present."""
-    header = rows[:1]
-    if len(rows) > 1 and _TABLE_SEPARATOR_RE.match(rows[1]):
-        header = rows[:2]
-    return header
+    """The leading label rows: the column names, however many lines they take,
+    through the --- separator when the table has one."""
+    for index, row in enumerate(rows[:_MAX_HEADER_LINES]):
+        if _TABLE_SEPARATOR_RE.match(row):
+            return rows[:index + 1]
+    return rows[:1]
 
 
 def _chunk_table(block, chunk_size):

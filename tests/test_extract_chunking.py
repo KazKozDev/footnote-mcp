@@ -62,6 +62,21 @@ def test_a_table_gets_a_wider_budget_than_prose():
     assert max(len(part) for part in chunk_text(TABLE)) > core.CHUNK_SIZE
 
 
+def test_a_wrapped_header_is_repeated_in_full():
+    """Wikipedia wraps a wide table's column names across two lines. Taking
+    only the first left every continuation part naming four of seven columns."""
+    wrapped = "\n".join([
+        "| Rank | Name | Industry | Revenue |",
+        "Growth | Employees | Headquarters |",
+        "|---|---|---|---|---|---|---|",
+        *[f"| {i} | Co {i} | Retail | {i * 1000} | {i}.1% | {i * 90} | Town {i} |" for i in range(120)],
+    ])
+    parts = chunk_text(wrapped)
+    assert len(parts) > 1
+    for part in parts:
+        assert part.splitlines()[:3] == wrapped.splitlines()[:3]
+
+
 # ── space-aligned grids ────────────────────────────────────────────────────
 
 def test_space_aligned_table_is_detected_and_keeps_its_header():
